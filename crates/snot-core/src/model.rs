@@ -5,11 +5,28 @@ use serde_json::Value;
 /// way so that ordering is a plain integer comparison.
 pub type Millis = i64;
 
+static LAST_MS: std::sync::atomic::AtomicI64 = std::sync::atomic::AtomicI64::new(0);
+
+/// Wall-clock milliseconds, forced to be strictly increasing within a process.
+///
+/// Two notes created in the same millisecond would otherwise tie in every
+/// "most recent first" list and come back in arbitrary order; nudging the
+/// clock forward by a millisecond keeps the ordering stable, and also stops a
+/// backwards clock adjustment from reshuffling the library.
 pub fn now_ms() -> Millis {
-    std::time::SystemTime::now()
+    use std::sync::atomic::Ordering::{Relaxed, SeqCst};
+    let wall = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_millis() as i64)
-        .unwrap_or(0)
+        .unwrap_or(0);
+    let mut prev = LAST_MS.load(Relaxed);
+    loop {
+        let next = if wall > prev { wall } else { prev + 1 };
+        match LAST_MS.compare_exchange_weak(prev, next, SeqCst, Relaxed) {
+            Ok(_) => return next,
+            Err(actual) => prev = actual,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -95,38 +112,32 @@ pub struct Attachment {
 }
 
 /// Which slice of the library a note list should show.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "camelCase")]
 pub enum Scope {
     /// Every note that is not in the trash.
+    #[default]
     All,
     /// Notes filed directly under one folder.
-    Folder { id: String },
+    Folder {
+        id: String,
+    },
     /// Notes with no folder.
     Unfiled,
     Favorites,
-    Tag { id: String },
+    Tag {
+        id: String,
+    },
     Trash,
 }
 
-impl Default for Scope {
-    fn default() -> Self {
-        Scope::All
-    }
-}
-
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub enum SortBy {
+    #[default]
     Updated,
     Created,
     Title,
-}
-
-impl Default for SortBy {
-    fn default() -> Self {
-        SortBy::Updated
-    }
 }
 
 /// Flattens a ProseMirror document to plain text: one line per block node.
@@ -165,7 +176,10 @@ fn walk(node: &Value, out: &mut String) {
         // about a note that is entirely a drawing.
         Some("ink") => out.push_str("\u{270e} drawing\n"),
         Some("image") => {
-            let alt = node.get("attrs").and_then(|a| a.get("alt")).and_then(Value::as_str);
+            let alt = node
+                .get("attrs")
+                .and_then(|a| a.get("alt"))
+                .and_then(Value::as_str);
             out.push_str(alt.unwrap_or("\u{1f5bc} image"));
             out.push('\n');
         }
@@ -190,7 +204,11 @@ fn walk(node: &Value, out: &mut String) {
 
 /// Samsung Notes titles a note by its first line unless you rename it; so do we.
 pub fn derive_title(text: &str) -> String {
-    let line = text.lines().find(|l| !l.trim().is_empty()).unwrap_or("").trim();
+    let line = text
+        .lines()
+        .find(|l| !l.trim().is_empty())
+        .unwrap_or("")
+        .trim();
     let mut title: String = line.chars().take(120).collect();
     if line.chars().count() > 120 {
         title.push('\u{2026}');

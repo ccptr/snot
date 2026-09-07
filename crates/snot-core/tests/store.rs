@@ -10,7 +10,9 @@ fn doc(text: &str) -> serde_json::Value {
 #[test]
 fn creates_and_reads_back_a_note() {
     let s = Store::open_in_memory().unwrap();
-    let note = s.create_note(None, Some(doc("Shopping list\nmilk"))).unwrap();
+    let note = s
+        .create_note(None, Some(doc("Shopping list\nmilk")))
+        .unwrap();
     assert_eq!(note.summary.title, "Shopping list");
     let again = s.get_note(&note.summary.id).unwrap();
     assert_eq!(again.doc, note.doc);
@@ -22,23 +24,37 @@ fn title_follows_the_first_line_until_it_is_overridden() {
     let n = s.create_note(None, Some(doc("draft"))).unwrap();
     let id = &n.summary.id;
 
-    let n = s.update_note(id, NotePatch { doc: Some(doc("second draft")), ..Default::default() })
+    let n = s
+        .update_note(
+            id,
+            NotePatch {
+                doc: Some(doc("second draft")),
+                ..Default::default()
+            },
+        )
         .unwrap();
     assert_eq!(n.summary.title, "second draft");
 
-    let n = s.update_note(id, NotePatch {
-        title: Some("Pinned title".into()),
-        doc: Some(doc("body changed again")),
-        ..Default::default()
-    }).unwrap();
+    let n = s
+        .update_note(
+            id,
+            NotePatch {
+                title: Some("Pinned title".into()),
+                doc: Some(doc("body changed again")),
+                ..Default::default()
+            },
+        )
+        .unwrap();
     assert_eq!(n.summary.title, "Pinned title");
 }
 
 #[test]
 fn search_matches_titles_and_bodies_by_prefix() {
     let s = Store::open_in_memory().unwrap();
-    s.create_note(None, Some(doc("Roast chicken\nheat the oven to 200C"))).unwrap();
-    s.create_note(None, Some(doc("Tax return\ndeadline in January"))).unwrap();
+    s.create_note(None, Some(doc("Roast chicken\nheat the oven to 200C")))
+        .unwrap();
+    s.create_note(None, Some(doc("Tax return\ndeadline in January")))
+        .unwrap();
 
     assert_eq!(s.search("chick", &Scope::All).unwrap().len(), 1);
     assert_eq!(s.search("oven", &Scope::All).unwrap().len(), 1);
@@ -52,8 +68,14 @@ fn search_matches_titles_and_bodies_by_prefix() {
 fn a_reindexed_note_stops_matching_its_old_text() {
     let s = Store::open_in_memory().unwrap();
     let n = s.create_note(None, Some(doc("aardvark"))).unwrap();
-    s.update_note(&n.summary.id, NotePatch { doc: Some(doc("buffalo")), ..Default::default() })
-        .unwrap();
+    s.update_note(
+        &n.summary.id,
+        NotePatch {
+            doc: Some(doc("buffalo")),
+            ..Default::default()
+        },
+    )
+    .unwrap();
     assert!(s.search("aardvark", &Scope::All).unwrap().is_empty());
     assert_eq!(s.search("buffalo", &Scope::All).unwrap().len(), 1);
 }
@@ -64,8 +86,14 @@ fn trash_hides_a_note_without_destroying_it() {
     let n = s.create_note(None, Some(doc("temporary"))).unwrap();
     s.trash_note(&n.summary.id).unwrap();
 
-    assert!(s.list_notes(&Scope::All, SortBy::Updated).unwrap().is_empty());
-    assert_eq!(s.list_notes(&Scope::Trash, SortBy::Updated).unwrap().len(), 1);
+    assert!(s
+        .list_notes(&Scope::All, SortBy::Updated)
+        .unwrap()
+        .is_empty());
+    assert_eq!(
+        s.list_notes(&Scope::Trash, SortBy::Updated).unwrap().len(),
+        1
+    );
     assert!(s.search("temporary", &Scope::All).unwrap().is_empty());
 
     s.restore_note(&n.summary.id).unwrap();
@@ -77,11 +105,15 @@ fn deleting_a_folder_trashes_its_notes_and_its_children() {
     let s = Store::open_in_memory().unwrap();
     let parent = s.create_folder("Work", None).unwrap();
     let child = s.create_folder("2026", Some(&parent.id)).unwrap();
-    s.create_note(Some(&child.id), Some(doc("q1 plan"))).unwrap();
+    s.create_note(Some(&child.id), Some(doc("q1 plan")))
+        .unwrap();
 
     s.delete_folder(&parent.id).unwrap();
     assert!(s.list_folders().unwrap().is_empty());
-    assert_eq!(s.list_notes(&Scope::Trash, SortBy::Updated).unwrap().len(), 1);
+    assert_eq!(
+        s.list_notes(&Scope::Trash, SortBy::Updated).unwrap().len(),
+        1
+    );
 }
 
 #[test]
@@ -101,9 +133,20 @@ fn tags_are_case_insensitively_unique() {
     assert_eq!(a.id, b.id);
 
     let n = s.create_note(None, Some(doc("standup"))).unwrap();
-    s.update_note(&n.summary.id, NotePatch { tags: Some(vec![a.id.clone()]), ..Default::default() })
-        .unwrap();
-    assert_eq!(s.list_notes(&Scope::Tag { id: a.id }, SortBy::Updated).unwrap().len(), 1);
+    s.update_note(
+        &n.summary.id,
+        NotePatch {
+            tags: Some(vec![a.id.clone()]),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    assert_eq!(
+        s.list_notes(&Scope::Tag { id: a.id }, SortBy::Updated)
+            .unwrap()
+            .len(),
+        1
+    );
 }
 
 #[test]
@@ -115,10 +158,22 @@ fn pinned_notes_sort_first() {
     assert_eq!(old[0].title, "newer");
 
     let first = s.create_note(None, Some(doc("pinned one"))).unwrap();
-    s.update_note(&first.summary.id, NotePatch { pinned: Some(true), ..Default::default() })
-        .unwrap();
-    s.update_note(&newer.summary.id, NotePatch { doc: Some(doc("newer still")), ..Default::default() })
-        .unwrap();
+    s.update_note(
+        &first.summary.id,
+        NotePatch {
+            pinned: Some(true),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    s.update_note(
+        &newer.summary.id,
+        NotePatch {
+            doc: Some(doc("newer still")),
+            ..Default::default()
+        },
+    )
+    .unwrap();
     let listed = s.list_notes(&Scope::All, SortBy::Updated).unwrap();
     assert_eq!(listed[0].title, "pinned one");
 }
@@ -127,8 +182,12 @@ fn pinned_notes_sort_first() {
 fn identical_attachments_share_one_file() {
     let dir = std::env::temp_dir().join(format!("snot-test-{}", uuid_ish()));
     let s = Store::open(&dir).unwrap();
-    let (a, pa) = s.put_attachment(None, "a.png", "image/png", b"same-bytes").unwrap();
-    let (b, pb) = s.put_attachment(None, "b.png", "image/png", b"same-bytes").unwrap();
+    let (a, pa) = s
+        .put_attachment(None, "a.png", "image/png", b"same-bytes")
+        .unwrap();
+    let (b, pb) = s
+        .put_attachment(None, "b.png", "image/png", b"same-bytes")
+        .unwrap();
     assert_ne!(a.id, b.id);
     assert_eq!(pa, pb);
     assert_eq!(s.attachment_path(&a.id).unwrap(), pa);
@@ -163,4 +222,29 @@ fn markdown_export_round_trips_the_shapes_a_note_actually_uses() {
     assert!(md.contains("- [x] milk"));
     assert!(md.contains("- [ ] eggs"));
     assert!(md.contains("**note** the `price`"));
+}
+
+#[test]
+fn notes_made_in_the_same_millisecond_still_have_a_stable_order() {
+    let s = Store::open_in_memory().unwrap();
+    let ids: Vec<String> = (0..24)
+        .map(|i| {
+            s.create_note(None, Some(doc(&format!("note {i}"))))
+                .unwrap()
+                .summary
+                .id
+        })
+        .collect();
+    let listed: Vec<String> = s
+        .list_notes(&Scope::All, SortBy::Updated)
+        .unwrap()
+        .into_iter()
+        .map(|n| n.id)
+        .collect();
+    let mut expected = ids;
+    expected.reverse();
+    assert_eq!(
+        listed, expected,
+        "newest first, with no ties left to chance"
+    );
 }

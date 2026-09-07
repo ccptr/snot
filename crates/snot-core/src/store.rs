@@ -99,7 +99,10 @@ impl Store {
     pub fn open_in_memory() -> Result<Self> {
         let conn = Connection::open_in_memory()?;
         conn.execute_batch(SCHEMA)?;
-        Ok(Store { conn, root: PathBuf::from(".") })
+        Ok(Store {
+            conn,
+            root: PathBuf::from("."),
+        })
     }
 
     pub fn root(&self) -> &Path {
@@ -197,7 +200,9 @@ impl Store {
     pub fn move_folder(&self, id: &str, parent_id: Option<&str>) -> Result<()> {
         if let Some(parent) = parent_id {
             if parent == id || self.is_descendant(parent, id)? {
-                return Err(Error::Invalid("a folder cannot be moved into itself".into()));
+                return Err(Error::Invalid(
+                    "a folder cannot be moved into itself".into(),
+                ));
             }
         }
         self.conn.execute(
@@ -215,9 +220,11 @@ impl Store {
             }
             cur = self
                 .conn
-                .query_row("SELECT parent_id FROM folders WHERE id = ?1", params![id], |r| {
-                    r.get::<_, Option<String>>(0)
-                })
+                .query_row(
+                    "SELECT parent_id FROM folders WHERE id = ?1",
+                    params![id],
+                    |r| r.get::<_, Option<String>>(0),
+                )
                 .optional()?
                 .flatten();
         }
@@ -231,7 +238,9 @@ impl Store {
         let mut subtree = vec![id.to_string()];
         let mut frontier = vec![id.to_string()];
         while let Some(parent) = frontier.pop() {
-            let mut stmt = self.conn.prepare("SELECT id FROM folders WHERE parent_id = ?1")?;
+            let mut stmt = self
+                .conn
+                .prepare("SELECT id FROM folders WHERE parent_id = ?1")?;
             let kids: Vec<String> = stmt
                 .query_map(params![parent], |r| r.get(0))?
                 .collect::<std::result::Result<_, _>>()?;
@@ -245,11 +254,10 @@ impl Store {
                 "UPDATE notes SET trashed_at = ?1, folder_id = NULL
                  WHERE trashed_at IS NULL AND folder_id IN ({placeholders})"
             ),
-            params_from_iter(
-                std::iter::once(now.to_string()).chain(subtree.iter().cloned()),
-            ),
+            params_from_iter(std::iter::once(now.to_string()).chain(subtree.iter().cloned())),
         )?;
-        self.conn.execute("DELETE FROM folders WHERE id = ?1", params![id])?;
+        self.conn
+            .execute("DELETE FROM folders WHERE id = ?1", params![id])?;
         Ok(())
     }
 
@@ -265,7 +273,14 @@ impl Store {
         self.conn.execute(
             "INSERT INTO notes(id, folder_id, title, doc, preview, created_at, updated_at)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?6)",
-            params![id, folder_id, title, serde_json::to_string(&doc)?, preview, now],
+            params![
+                id,
+                folder_id,
+                title,
+                serde_json::to_string(&doc)?,
+                preview,
+                now
+            ],
         )?;
         self.reindex(&id, &title, &text)?;
         self.get_note(&id)
@@ -274,11 +289,16 @@ impl Store {
     pub fn get_note(&self, id: &str) -> Result<Note> {
         let doc: String = self
             .conn
-            .query_row("SELECT doc FROM notes WHERE id = ?1", params![id], |r| r.get(0))
+            .query_row("SELECT doc FROM notes WHERE id = ?1", params![id], |r| {
+                r.get(0)
+            })
             .optional()?
             .ok_or_else(|| Error::NotFound(format!("note {id}")))?;
         let summary = self.get_summary(id)?;
-        Ok(Note { summary, doc: serde_json::from_str(&doc)? })
+        Ok(Note {
+            summary,
+            doc: serde_json::from_str(&doc)?,
+        })
     }
 
     fn get_summary(&self, id: &str) -> Result<NoteSummary> {
@@ -311,7 +331,9 @@ impl Store {
     pub fn update_note(&self, id: &str, patch: NotePatch) -> Result<Note> {
         let exists: bool = self
             .conn
-            .query_row("SELECT 1 FROM notes WHERE id = ?1", params![id], |_| Ok(true))
+            .query_row("SELECT 1 FROM notes WHERE id = ?1", params![id], |_| {
+                Ok(true)
+            })
             .optional()?
             .unwrap_or(false);
         if !exists {
@@ -335,11 +357,15 @@ impl Store {
                 "UPDATE notes SET title = ?2, updated_at = ?3 WHERE id = ?1",
                 params![id, title, now],
             )?;
-            let body: String = self.conn.query_row(
-                "SELECT body FROM notes_fts WHERE note_id = ?1",
-                params![id],
-                |r| r.get(0),
-            ).optional()?.unwrap_or_default();
+            let body: String = self
+                .conn
+                .query_row(
+                    "SELECT body FROM notes_fts WHERE note_id = ?1",
+                    params![id],
+                    |r| r.get(0),
+                )
+                .optional()?
+                .unwrap_or_default();
             self.reindex(id, title, &body)?;
         }
 
@@ -403,13 +429,16 @@ impl Store {
     pub fn purge_note(&self, id: &str) -> Result<()> {
         self.conn
             .execute("DELETE FROM notes_fts WHERE note_id = ?1", params![id])?;
-        self.conn.execute("DELETE FROM notes WHERE id = ?1", params![id])?;
+        self.conn
+            .execute("DELETE FROM notes WHERE id = ?1", params![id])?;
         Ok(())
     }
 
     pub fn empty_trash(&self) -> Result<usize> {
         let ids: Vec<String> = {
-            let mut stmt = self.conn.prepare("SELECT id FROM notes WHERE trashed_at IS NOT NULL")?;
+            let mut stmt = self
+                .conn
+                .prepare("SELECT id FROM notes WHERE trashed_at IS NOT NULL")?;
             let rows = stmt.query_map([], |r| r.get(0))?;
             rows.collect::<std::result::Result<_, _>>()?
         };
@@ -425,7 +454,10 @@ impl Store {
             Scope::Unfiled => ("n.trashed_at IS NULL AND n.folder_id IS NULL", vec![]),
             Scope::Favorites => ("n.trashed_at IS NULL AND n.favorite = 1", vec![]),
             Scope::Trash => ("n.trashed_at IS NOT NULL", vec![]),
-            Scope::Folder { id } => ("n.trashed_at IS NULL AND n.folder_id = ?1", vec![id.clone()]),
+            Scope::Folder { id } => (
+                "n.trashed_at IS NULL AND n.folder_id = ?1",
+                vec![id.clone()],
+            ),
             Scope::Tag { id } => (
                 "n.trashed_at IS NULL AND EXISTS
                  (SELECT 1 FROM note_tags nt WHERE nt.note_id = n.id AND nt.tag_id = ?1)",
@@ -434,11 +466,13 @@ impl Store {
         };
         // Pinned notes float to the top of every scope except the trash, where
         // recency of deletion is the only ordering that makes sense.
+        // Every ordering ends in a total tiebreak so a list never reshuffles
+        // between two reads of an unchanged library.
         let order = match (scope, sort) {
-            (Scope::Trash, _) => "n.trashed_at DESC".to_string(),
-            (_, SortBy::Updated) => "n.pinned DESC, n.updated_at DESC".to_string(),
-            (_, SortBy::Created) => "n.pinned DESC, n.created_at DESC".to_string(),
-            (_, SortBy::Title) => "n.pinned DESC, n.title COLLATE NOCASE ASC".to_string(),
+            (Scope::Trash, _) => "n.trashed_at DESC, n.id",
+            (_, SortBy::Updated) => "n.pinned DESC, n.updated_at DESC, n.id",
+            (_, SortBy::Created) => "n.pinned DESC, n.created_at DESC, n.id",
+            (_, SortBy::Title) => "n.pinned DESC, n.title COLLATE NOCASE ASC, n.id",
         };
         let sql = format!(
             "SELECT n.id, n.folder_id, n.title, n.preview, n.color, n.pinned, n.favorite,
@@ -497,7 +531,12 @@ impl Store {
              FROM tags t ORDER BY t.name COLLATE NOCASE",
         )?;
         let rows = stmt.query_map([], |r| {
-            Ok(Tag { id: r.get(0)?, name: r.get(1)?, color: r.get(2)?, note_count: r.get(3)? })
+            Ok(Tag {
+                id: r.get(0)?,
+                name: r.get(1)?,
+                color: r.get(2)?,
+                note_count: r.get(3)?,
+            })
         })?;
         Ok(rows.collect::<std::result::Result<_, _>>()?)
     }
@@ -514,7 +553,14 @@ impl Store {
             .query_row(
                 "SELECT id, name, color FROM tags WHERE name = ?1 COLLATE NOCASE",
                 params![name],
-                |r| Ok(Tag { id: r.get(0)?, name: r.get(1)?, color: r.get(2)?, note_count: 0 }),
+                |r| {
+                    Ok(Tag {
+                        id: r.get(0)?,
+                        name: r.get(1)?,
+                        color: r.get(2)?,
+                        note_count: 0,
+                    })
+                },
             )
             .optional()?
         {
@@ -525,11 +571,17 @@ impl Store {
             "INSERT INTO tags(id, name, color) VALUES (?1, ?2, NULL)",
             params![id, name],
         )?;
-        Ok(Tag { id, name: name.to_string(), color: None, note_count: 0 })
+        Ok(Tag {
+            id,
+            name: name.to_string(),
+            color: None,
+            note_count: 0,
+        })
     }
 
     pub fn delete_tag(&self, id: &str) -> Result<()> {
-        self.conn.execute("DELETE FROM tags WHERE id = ?1", params![id])?;
+        self.conn
+            .execute("DELETE FROM tags WHERE id = ?1", params![id])?;
         Ok(())
     }
 
@@ -580,7 +632,15 @@ impl Store {
         self.conn.execute(
             "INSERT INTO attachments(id, note_id, mime, name, size, sha256, created_at)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
-            params![att.id, att.note_id, att.mime, att.name, att.size, att.sha256, att.created_at],
+            params![
+                att.id,
+                att.note_id,
+                att.mime,
+                att.name,
+                att.size,
+                att.sha256,
+                att.created_at
+            ],
         )?;
         Ok((att, path))
     }
@@ -600,15 +660,27 @@ impl Store {
             .and_then(|e| e.to_str())
             .map(|e| format!(".{}", e.to_lowercase()))
             .unwrap_or_default();
-        Ok(self.root.join("attachments").join(&sha[..2]).join(format!("{sha}{ext}")))
+        Ok(self
+            .root
+            .join("attachments")
+            .join(&sha[..2])
+            .join(format!("{sha}{ext}")))
     }
 
     pub fn stats(&self) -> Result<(i64, i64, i64)> {
         let notes: i64 = self.conn.query_row(
-            "SELECT COUNT(*) FROM notes WHERE trashed_at IS NULL", [], |r| r.get(0))?;
+            "SELECT COUNT(*) FROM notes WHERE trashed_at IS NULL",
+            [],
+            |r| r.get(0),
+        )?;
         let trashed: i64 = self.conn.query_row(
-            "SELECT COUNT(*) FROM notes WHERE trashed_at IS NOT NULL", [], |r| r.get(0))?;
-        let folders: i64 = self.conn.query_row("SELECT COUNT(*) FROM folders", [], |r| r.get(0))?;
+            "SELECT COUNT(*) FROM notes WHERE trashed_at IS NOT NULL",
+            [],
+            |r| r.get(0),
+        )?;
+        let folders: i64 = self
+            .conn
+            .query_row("SELECT COUNT(*) FROM folders", [], |r| r.get(0))?;
         Ok((notes, trashed, folders))
     }
 }

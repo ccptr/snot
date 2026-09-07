@@ -103,8 +103,14 @@ fn block(node: &Value, out: &mut String, depth: usize) {
         "horizontalRule" => out.push_str("---\n\n"),
         "image" => {
             let attrs = node.get("attrs");
-            let src = attrs.and_then(|a| a.get("src")).and_then(Value::as_str).unwrap_or("");
-            let alt = attrs.and_then(|a| a.get("alt")).and_then(Value::as_str).unwrap_or("image");
+            let src = attrs
+                .and_then(|a| a.get("src"))
+                .and_then(Value::as_str)
+                .unwrap_or("");
+            let alt = attrs
+                .and_then(|a| a.get("alt"))
+                .and_then(Value::as_str)
+                .unwrap_or("image");
             out.push_str(&format!("![{alt}]({src})\n\n"));
         }
         // Ink has no Markdown spelling; name it so the export is not silently
@@ -169,9 +175,14 @@ fn inline(node: &Value, out: &mut String) {
             Some("hardBreak") => out.push_str("  \n"),
             Some("image") => {
                 let attrs = child.get("attrs");
-                let src = attrs.and_then(|a| a.get("src")).and_then(Value::as_str).unwrap_or("");
-                let alt =
-                    attrs.and_then(|a| a.get("alt")).and_then(Value::as_str).unwrap_or("image");
+                let src = attrs
+                    .and_then(|a| a.get("src"))
+                    .and_then(Value::as_str)
+                    .unwrap_or("");
+                let alt = attrs
+                    .and_then(|a| a.get("alt"))
+                    .and_then(Value::as_str)
+                    .unwrap_or("image");
                 out.push_str(&format!("![{alt}]({src})"));
             }
             _ => inline(child, out),
@@ -186,7 +197,12 @@ fn wrap_for(marks: &[&str]) -> (String, String) {
     if marks.contains(&"code") {
         return ("`".into(), "`".into());
     }
-    for (mark, delim) in [("bold", "**"), ("italic", "*"), ("strike", "~~"), ("highlight", "==")] {
+    for (mark, delim) in [
+        ("bold", "**"),
+        ("italic", "*"),
+        ("strike", "~~"),
+        ("highlight", "=="),
+    ] {
         if marks.contains(&mark) {
             open.push_str(delim);
             close.insert_str(0, delim);
