@@ -1,0 +1,27 @@
+[package]
+name = "snot-app"
+description = "Snot — open source notes"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lib]
+# The mobile shells load the app as a library; `main.rs` is the desktop entry.
+name = "snot_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+snot-core = { path = "../snot-core" }
+serde.workspace = true
+serde_json.workspace = true
+tauri = { version = "2", features = ["protocol-asset"] }
+tauri-plugin-dialog = "2"
+base64 = "0.22"
+mime_guess = "2"
+
+[features]
+# Used by `tauri dev`/`tauri build` to enable the custom-protocol path.
+custom-protocol = ["tauri/custom-protocol"]

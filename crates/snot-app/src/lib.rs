@@ -1,0 +1,62 @@
+//! The Snot application shell.
+//!
+//! Everything here is glue: it owns the library on disk, exposes `snot-core`
+//! to the webview as commands, and nothing more. Behaviour that a future CLI
+//! or sync daemon would also want belongs in `snot-core`, not here.
+
+mod commands;
+
+use std::sync::Mutex;
+
+use snot_core::Store;
+use tauri::Manager;
+
+pub struct AppState {
+    pub store: Mutex<Store>,
+}
+
+#[cfg_attr(mobile, tauri::mobile_entry_point)]
+pub fn run() {
+    tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
+        .setup(|app| {
+            // One library per install, in the platform's app-data directory.
+            // Overridable so a test run or a second profile can point elsewhere.
+            let root = match std::env::var_os("SNOT_LIBRARY") {
+                Some(path) => std::path::PathBuf::from(path),
+                None => app.path().app_data_dir()?.join("library"),
+            };
+            std::fs::create_dir_all(&root)?;
+            let store = Store::open(&root)?;
+            app.manage(AppState { store: Mutex::new(store) });
+            Ok(())
+        })
+        .invoke_handler(tauri::generate_handler![
+            commands::library_root,
+            commands::stats,
+            commands::list_folders,
+            commands::create_folder,
+            commands::rename_folder,
+            commands::set_folder_color,
+            commands::move_folder,
+            commands::delete_folder,
+            commands::list_notes,
+            commands::search_notes,
+            commands::get_note,
+            commands::create_note,
+            commands::update_note,
+            commands::trash_note,
+            commands::restore_note,
+            commands::purge_note,
+            commands::empty_trash,
+            commands::list_tags,
+            commands::ensure_tag,
+            commands::delete_tag,
+            commands::put_attachment,
+            commands::attachment_path,
+            commands::export_markdown,
+            commands::write_text_file,
+        ])
+        .run(tauri::generate_context!())
+        .expect("failed to start Snot");
+}
