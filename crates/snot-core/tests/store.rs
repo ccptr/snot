@@ -285,31 +285,3 @@ fn page_ink_round_trips_and_flags_the_summary() {
     assert_eq!(n.ink, strokes);
     assert_eq!(n.summary.title, "meeting notes");
 }
-
-#[test]
-fn a_library_written_before_ink_existed_still_opens() {
-    let dir = std::env::temp_dir().join(format!("snot-migrate-{}", uuid_ish()));
-    std::fs::create_dir_all(&dir).unwrap();
-    {
-        // A v1 library: notes with no ink column.
-        let conn = rusqlite::Connection::open(dir.join("snot.db")).unwrap();
-        conn.execute_batch(
-            "CREATE TABLE notes (
-                 id TEXT PRIMARY KEY, folder_id TEXT, title TEXT NOT NULL DEFAULT '',
-                 doc TEXT NOT NULL, preview TEXT NOT NULL DEFAULT '', color TEXT,
-                 pinned INTEGER NOT NULL DEFAULT 0, favorite INTEGER NOT NULL DEFAULT 0,
-                 locked INTEGER NOT NULL DEFAULT 0, created_at INTEGER NOT NULL,
-                 updated_at INTEGER NOT NULL, trashed_at INTEGER);
-             INSERT INTO notes(id, doc, title, created_at, updated_at)
-             VALUES ('old', '{\"type\":\"doc\",\"content\":[]}', 'legacy', 1, 1);",
-        )
-        .unwrap();
-    }
-
-    let s = Store::open(&dir).unwrap();
-    let note = s.get_note("old").unwrap();
-    assert_eq!(note.summary.title, "legacy");
-    assert_eq!(note.ink, json!([]));
-    assert!(!note.summary.has_ink);
-    std::fs::remove_dir_all(&dir).ok();
-}

@@ -16,6 +16,7 @@
   --danger: #c0362c;
   --danger-soft: #fbe9e7;
   --mark: #fef08a;
+  --ink-default: #1f2937;
   --shadow: 0 1px 2px rgba(20, 30, 22, .06), 0 8px 24px rgba(20, 30, 22, .07);
   --radius: 12px;
   --sidebar-w: 244px;
@@ -47,6 +48,7 @@
     --danger: #f2796b;
     --danger-soft: #2c1a18;
     --mark: #6b5f1f;
+    --ink-default: #e8ece8;
     --shadow: 0 1px 2px rgba(0, 0, 0, .4), 0 10px 30px rgba(0, 0, 0, .34);
   }
 }
@@ -66,6 +68,7 @@
   --danger: #f2796b;
   --danger-soft: #2c1a18;
   --mark: #6b5f1f;
+  --ink-default: #e8ece8;
   --shadow: 0 1px 2px rgba(0, 0, 0, .4), 0 10px 30px rgba(0, 0, 0, .34);
 }
 
@@ -362,15 +365,16 @@ button { font: inherit; color: inherit; }
 
 .toolbar-slot { border-bottom: 1px solid var(--line-2); min-width: 0; }
 
+/* Wraps rather than scrolls: a sideways-scrolling toolbar hides tools behind
+   a gesture a mouse cannot make, and the webview will not translate a
+   vertical wheel into horizontal scroll. */
 .toolbar {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 1px;
   padding: 6px 10px;
-  overflow-x: auto;
-  scrollbar-width: none;
 }
-.toolbar::-webkit-scrollbar { display: none; }
 
 .toolbar-sep {
   width: 1px;
@@ -586,9 +590,9 @@ button { font: inherit; color: inherit; }
   outline: none;
   font-size: 15.5px;
   line-height: 1.68;
-  max-width: 820px;
-  margin: 0 auto;
   caret-color: var(--accent);
+  position: relative;
+  z-index: 1;
 }
 
 .prose > * + * { margin-top: .7em; }
@@ -656,97 +660,98 @@ button { font: inherit; color: inherit; }
 
 .ProseMirror-selectednode { outline: 2px solid var(--accent); border-radius: 8px; }
 
-/* -------------------------------------------------------------- ink block */
+/* ------------------------------------------------------- handwriting */
 
-.ink-block {
+/* The page stacks text and handwriting: ink is drawn across the whole note,
+   over and between paragraphs, rather than inside a box carved out of the
+   text flow. */
+.page {
   position: relative;
-  border: 1px solid var(--line);
-  border-radius: 12px;
-  background: var(--surface-2);
-  overflow: hidden;
-}
-.ink-block.selected { border-color: var(--accent); }
-.ink-block.empty:not(.editing)::after {
-  content: "Empty drawing — press Draw to start";
-  position: absolute;
-  inset: auto 0 42% 0;
-  text-align: center;
-  color: var(--text-3);
-  font-size: 12.5px;
-  pointer-events: none;
+  max-width: 860px;
+  margin: 0 auto;
 }
 
-.ink-toolbar {
+.ink-layer {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  z-index: 2;
+  pointer-events: none;
+  touch-action: none;
+}
+.ink-layer.drawing { pointer-events: auto; cursor: crosshair; }
+
+/* While the pen is down, the text underneath must not take selections or
+   show a caret competing with the nib. */
+.ProseMirror.pen-mode { user-select: none; caret-color: transparent; }
+
+.pen-tray {
   display: flex;
   align-items: center;
-  gap: 5px;
   flex-wrap: wrap;
-  padding: 6px 8px;
-  border-bottom: 1px solid var(--line-2);
-  background: var(--surface);
+  gap: 5px;
+  padding: 7px 10px;
+  border-top: 1px solid var(--line-2);
+  background: var(--surface-2);
 }
+.pen-tray[hidden] { display: none; }
 
-.ink-tool {
-  padding: 3px 9px;
+.pen-group { display: flex; gap: 2px; }
+.pen-colors, .pen-sizes { display: flex; align-items: center; gap: 4px; }
+.pen-colors { margin-left: 4px; }
+.pen-sizes { margin-left: 4px; }
+
+.pen-tool {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: none;
+  color: var(--text-2);
+  cursor: pointer;
+}
+.pen-tool:hover { background: color-mix(in srgb, var(--text) 8%, transparent); }
+.pen-tool.active { background: var(--accent-soft); color: var(--accent); border-color: var(--accent); }
+.pen-tool.danger:hover { background: var(--danger-soft); color: var(--danger); }
+
+.pen-swatch {
+  width: 19px;
+  height: 19px;
+  border: 2px solid transparent;
+  border-radius: 50%;
+  padding: 0;
+  cursor: pointer;
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, .18);
+}
+.pen-swatch.active { border-color: var(--text); transform: scale(1.15); }
+.pen-swatch[hidden] { display: none; }
+
+.pen-size {
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
   border: 1px solid transparent;
   border-radius: 7px;
   background: none;
-  color: var(--text-2);
-  font-size: 12.5px;
   cursor: pointer;
 }
-.ink-tool:hover { background: color-mix(in srgb, var(--text) 8%, transparent); }
-.ink-tool.active { background: var(--accent-soft); color: var(--accent); border-color: var(--accent); }
-.ink-tool.ink-danger:hover { background: var(--danger-soft); color: var(--danger); }
-.ink-draw-toggle { font-weight: 600; }
+.pen-size i { display: block; border-radius: 50%; background: var(--text-2); }
+.pen-size.active { background: var(--accent-soft); border-color: var(--accent); }
+.pen-size.active i { background: var(--accent); }
 
-.ink-tools, .ink-colors, .ink-sizes { display: flex; gap: 4px; align-items: center; }
-.ink-colors { margin-left: 4px; }
-
-.ink-swatch {
-  width: 18px;
-  height: 18px;
-  border: 2px solid transparent;
-  border-radius: 50%;
+.pen-done {
+  margin-left: auto;
+  padding: 5px 12px;
+  border: 0;
+  border-radius: 8px;
+  background: var(--accent);
+  color: var(--accent-text);
+  font-weight: 560;
   cursor: pointer;
-  padding: 0;
-}
-.ink-swatch.active { border-color: var(--text); transform: scale(1.14); }
-
-.ink-size {
-  display: grid;
-  place-items: center;
-  width: 22px;
-  height: 22px;
-  border: 1px solid transparent;
-  border-radius: 6px;
-  background: none;
-  cursor: pointer;
-}
-.ink-size i { display: block; border-radius: 50%; background: var(--text-2); }
-.ink-size.active { background: var(--accent-soft); border-color: var(--accent); }
-.ink-size.active i { background: var(--accent); }
-
-.ink-surface { display: block; width: 100%; background: transparent; }
-.ink-block.editing .ink-surface { cursor: crosshair; background: color-mix(in srgb, var(--accent) 4%, transparent); }
-.ink-block.ruled .ink-surface {
-  background-image: repeating-linear-gradient(
-    to bottom, transparent, transparent 31px, var(--line) 31px, var(--line) 32px);
-}
-
-.ink-grip {
-  height: 12px;
-  cursor: ns-resize;
-  background: linear-gradient(to bottom, transparent, color-mix(in srgb, var(--text) 6%, transparent));
-}
-.ink-grip::after {
-  content: "";
-  display: block;
-  width: 34px;
-  height: 3px;
-  margin: 4px auto;
-  border-radius: 2px;
-  background: var(--line);
 }
 
 /* ------------------------------------------------------------ responsive */
@@ -782,7 +787,7 @@ button { font: inherit; color: inherit; }
     background: rgba(10, 14, 11, .38);
   }
 
-  .prose { padding: 18px 16px 120px; font-size: 16px; }
+  .prose { padding: 18px 16px 140px; font-size: 16px; }
   .note-card { padding-top: 13px; padding-bottom: 13px; }
   .card-more { opacity: 1; }
   .folder-pill { margin-left: 0; }

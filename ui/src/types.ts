@@ -29,17 +29,21 @@ export interface NoteSummary {
   updatedAt: number;
   trashedAt: number | null;
   tags: string[];
+  hasInk: boolean;
   snippet?: string;
 }
 
 export interface Note extends NoteSummary {
   doc: unknown;
+  /** Page handwriting: an array of vector strokes drawn across the note. */
+  ink: unknown;
 }
 
 /** Omitted fields are left alone; an explicit `null` clears the field. */
 export interface NotePatch {
   title?: string;
   doc?: unknown;
+  ink?: unknown;
   folderId?: string | null;
   color?: string | null;
   pinned?: boolean;

@@ -93,8 +93,7 @@ impl Store {
         let conn = Connection::open(root.join("snot.db"))?;
         conn.execute_batch(SCHEMA)?;
         let store = Store { conn, root };
-        store.migrate()?;
-        store.set_meta("schema_version", "2")?;
+        store.set_meta("schema_version", "1")?;
         Ok(store)
     }
 
@@ -105,21 +104,6 @@ impl Store {
             conn,
             root: PathBuf::from("."),
         })
-    }
-
-    /// Brings a library written by an older build up to the current schema.
-    fn migrate(&self) -> Result<()> {
-        let mut stmt = self.conn.prepare("PRAGMA table_info(notes)")?;
-        let columns: Vec<String> = stmt
-            .query_map([], |r| r.get::<_, String>(1))?
-            .collect::<std::result::Result<_, _>>()?;
-        if !columns.iter().any(|c| c == "ink") {
-            self.conn.execute(
-                "ALTER TABLE notes ADD COLUMN ink TEXT NOT NULL DEFAULT '[]'",
-                [],
-            )?;
-        }
-        Ok(())
     }
 
     pub fn root(&self) -> &Path {

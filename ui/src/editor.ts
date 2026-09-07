@@ -10,15 +10,28 @@ import { convertFileSrc } from "@tauri-apps/api/core";
 
 import { api } from "./api";
 import { button, el, icon } from "./dom";
-import { Ink } from "./ink";
+import {
+  DEFAULT_INK, INK_COLORS, INK_SIZES, InkLayer, MARKER_COLORS, type ToolState,
+} from "./ink";
 
 const HIGHLIGHTS = ["#fef08a", "#bbf7d0", "#bfdbfe", "#fbcfe8", "#fed7aa"];
 
 export interface NoteEditor {
   editor: Editor;
   toolbar: HTMLElement;
+  ink: InkLayer;
+  /** Loads a different note's handwriting and leaves pen mode. */
+  setInk(strokes: unknown): void;
   destroy(): void;
 }
+
+/** Pen settings persist across notes, the way a real pen tray does. */
+const tools: ToolState = {
+  tool: "pen",
+  color: DEFAULT_INK,
+  markerColor: MARKER_COLORS[0]!,
+  size: 4,
+};
 
 /** Turns a picked or pasted file into an attachment and returns its webview URL. */
 async function storeImage(noteId: string | null, file: File): Promise<string> {
@@ -29,10 +42,20 @@ async function storeImage(noteId: string | null, file: File): Promise<string> {
 
 export function createEditor(
   mount: HTMLElement,
-  opts: { onChange: (doc: unknown) => void; noteId: () => string | null },
+  opts: {
+    onChange: (doc: unknown) => void;
+    onInkChange: () => void;
+    noteId: () => string | null;
+  },
 ): NoteEditor {
+  // The page holds the text and the handwriting layer stacked on top of each
+  // other, so ink can be drawn anywhere across the note rather than inside a
+  // box carved out of the text flow.
+  const page = el("div", { class: "page" });
+  mount.appendChild(page);
+
   const editor = new Editor({
-    element: mount,
+    element: page,
     extensions: [
       StarterKit.configure({
         heading: { levels: [1, 2, 3] },
@@ -44,8 +67,7 @@ export function createEditor(
       TaskItem.configure({ nested: true }),
       TextAlign.configure({ types: ["heading", "paragraph"] }),
       Image.configure({ inline: false, allowBase64: false }),
-      Placeholder.configure({ placeholder: "Start writing, or tap the pen to draw…" }),
-      Ink,
+      Placeholder.configure({ placeholder: "Start writing, or pick up the pen to draw…" }),
     ],
     editorProps: {
       attributes: { class: "prose", spellcheck: "true" },
@@ -79,18 +101,48 @@ export function createEditor(
     onUpdate: ({ editor: e }) => opts.onChange(e.getJSON()),
   });
 
-  const toolbar = buildToolbar(editor, opts.noteId);
+  const ink = new InkLayer(page, tools, opts.onInkChange);
+  page.appendChild(ink.el);
+
+  /** Keeps the page tall enough for its text and for ink drawn below it. */
+  const syncPage = () => {
+    const prose = page.querySelector<HTMLElement>(".ProseMirror");
+    const needed = Math.max(
+      mount.clientHeight,
+      (prose?.scrollHeight ?? 0) + 40,
+      ink.inkDepth() + 160,
+    );
+    const next = `${Math.round(needed)}px`;
+    if (page.style.minHeight !== next) page.style.minHeight = next;
+    ink.resize();
+  };
+
+  const observer = new ResizeObserver(() => syncPage());
+  observer.observe(page);
+  observer.observe(mount);
+
+  const { toolbar, tray, setPenMode } = buildToolbar(editor, ink, opts.noteId, syncPage);
   const refresh = () => refreshToolbar(editor, toolbar);
   editor.on("transaction", refresh);
   editor.on("selectionUpdate", refresh);
+  editor.on("update", syncPage);
   refresh();
+  syncPage();
 
   return {
     editor,
-    toolbar,
+    toolbar: el("div", { class: "toolbars" }, toolbar, tray),
+    ink,
+    setInk(strokes: unknown) {
+      setPenMode(false);
+      ink.setStrokes(strokes);
+      syncPage();
+    },
     destroy() {
+      observer.disconnect();
       editor.off("transaction", refresh);
       editor.off("selectionUpdate", refresh);
+      editor.off("update", syncPage);
       editor.destroy();
     },
   };
@@ -181,7 +233,18 @@ const TOOLS: (ToolSpec | "sep")[] = [
   },
 ];
 
-function buildToolbar(editor: Editor, noteId: () => string | null): HTMLElement {
+interface Toolbars {
+  toolbar: HTMLElement;
+  tray: HTMLElement;
+  setPenMode: (on: boolean) => void;
+}
+
+function buildToolbar(
+  editor: Editor,
+  ink: InkLayer,
+  noteId: () => string | null,
+  syncPage: () => void,
+): Toolbars {
   const bar = el("div", { class: "toolbar", attrs: { role: "toolbar", "aria-label": "Formatting" } });
 
   for (const spec of TOOLS) {
@@ -217,15 +280,16 @@ function buildToolbar(editor: Editor, noteId: () => string | null): HTMLElement 
   imageBtn.addEventListener("mousedown", (e) => e.preventDefault());
   bar.appendChild(imageBtn);
 
-  const inkBtn = button({
-    label: "Insert drawing",
+  const penBtn = button({
+    label: "Draw on the page",
     icon: "pen",
     class: "tool",
     showLabel: false,
-    onClick: () => (editor.chain().focus() as any).insertInk().run(),
+    onClick: () => setPenMode(!ink.isEnabled()),
   });
-  inkBtn.addEventListener("mousedown", (e) => e.preventDefault());
-  bar.appendChild(inkBtn);
+  penBtn.dataset.tool = "pen";
+  penBtn.addEventListener("mousedown", (e) => e.preventDefault());
+  bar.appendChild(penBtn);
 
   bar.appendChild(el("span", { class: "toolbar-sep" }));
   for (const [name, label, iconName] of [
@@ -245,7 +309,117 @@ function buildToolbar(editor: Editor, noteId: () => string | null): HTMLElement 
     bar.appendChild(b);
   }
 
-  return bar;
+  const tray = buildPenTray(ink, syncPage, () => setPenMode(false));
+
+  const setPenMode = (on: boolean) => {
+    ink.setEnabled(on);
+    penBtn.classList.toggle("active", on);
+    tray.hidden = !on;
+    editor.view.dom.classList.toggle("pen-mode", on);
+    if (!on) editor.commands.focus();
+  };
+  setPenMode(false);
+
+  return { toolbar: bar, tray, setPenMode };
+}
+
+/**
+ * The pen tray: which pen, what colour, how thick. It only appears while pen
+ * mode is on, so the writing toolbar is not permanently crowded by tools that
+ * are only meaningful with a pen in hand.
+ */
+function buildPenTray(ink: InkLayer, syncPage: () => void, done: () => void): HTMLElement {
+  const tray = el("div", { class: "pen-tray", attrs: { role: "toolbar", "aria-label": "Pen" } });
+  const swatches: HTMLElement[] = [];
+  const sizeButtons: HTMLElement[] = [];
+  const toolButtons: Partial<Record<ToolState["tool"], HTMLElement>> = {};
+
+  const refresh = () => {
+    for (const [name, b] of Object.entries(toolButtons)) {
+      b?.classList.toggle("active", tools.tool === name);
+    }
+    const active = tools.tool === "marker" ? tools.markerColor : tools.color;
+    const palette = tools.tool === "marker" ? MARKER_COLORS : INK_COLORS;
+    for (const s of swatches) {
+      const color = s.dataset.color!;
+      s.hidden = !palette.includes(color);
+      s.classList.toggle("active", color === active);
+    }
+    for (const b of sizeButtons) {
+      b.classList.toggle("active", Number(b.dataset.size) === tools.size);
+    }
+  };
+
+  const press = (label: string, cls: string, onClick: () => void) => {
+    const b = el("button", {
+      class: cls,
+      title: label,
+      attrs: { type: "button", "aria-label": label },
+      on: { click: onClick },
+    });
+    b.addEventListener("mousedown", (e) => e.preventDefault());
+    return b;
+  };
+
+  const group = el("div", { class: "pen-group" });
+  for (const tool of ["pen", "marker", "eraser"] as const) {
+    const b = press(
+      { pen: "Pen", marker: "Marker", eraser: "Eraser" }[tool],
+      "pen-tool",
+      () => {
+        tools.tool = tool;
+        refresh();
+      },
+    );
+    b.appendChild(icon(tool === "eraser" ? "eraser" : tool === "marker" ? "highlight" : "pen", 17));
+    toolButtons[tool] = b;
+    group.appendChild(b);
+  }
+
+  const colors = el("div", { class: "pen-colors" });
+  for (const color of [...INK_COLORS, ...MARKER_COLORS]) {
+    const b = press(color, "pen-swatch", () => {
+      if (tools.tool === "eraser") tools.tool = "pen";
+      if (tools.tool === "marker") tools.markerColor = color;
+      else tools.color = color;
+      refresh();
+    });
+    b.style.background = color === DEFAULT_INK ? "var(--ink-default)" : color;
+    b.dataset.color = color;
+    swatches.push(b);
+    colors.appendChild(b);
+  }
+
+  const sizes = el("div", { class: "pen-sizes" });
+  for (const size of INK_SIZES) {
+    const b = press(`Thickness ${size}`, "pen-size", () => {
+      tools.size = size;
+      refresh();
+    });
+    b.appendChild(el("i", { style: { width: `${3 + size}px`, height: `${3 + size}px` } }));
+    b.dataset.size = String(size);
+    sizeButtons.push(b);
+    sizes.appendChild(b);
+  }
+
+  const undo = press("Undo stroke", "pen-tool", () => {
+    ink.undo();
+    syncPage();
+  });
+  undo.appendChild(icon("undo", 17));
+
+  const clear = press("Erase all handwriting", "pen-tool danger", () => {
+    ink.clear();
+    syncPage();
+  });
+  clear.appendChild(icon("trash", 17));
+
+  const finish = press("Done drawing", "pen-done", done);
+  finish.appendChild(el("span", { text: "Done" }));
+
+  tray.append(group, colors, sizes, undo, clear, finish);
+  refresh();
+  return tray;
 }
 
 function highlightMenu(editor: Editor): HTMLElement {

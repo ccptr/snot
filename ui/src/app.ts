@@ -341,6 +341,7 @@ export class App {
     const heading = el("div", { class: "card-head" },
       note.pinned ? icon("pin", 14) : null,
       el("h3", { class: "card-title", text: note.title || "Untitled note" }),
+      note.hasInk ? icon("pen", 14) : null,
       note.favorite ? icon("star", 14) : null,
     );
     const preview = el("p", { class: "card-preview" });
@@ -469,16 +470,19 @@ export class App {
     this.emptyState.classList.remove("visible");
 
     if (!this.editor) {
+      const touched = () => {
+        this.saveState.textContent = "Unsaved";
+        this.saveSoon();
+      };
       this.editor = createEditor(this.editorMount, {
         noteId: () => this.current?.id ?? null,
-        onChange: () => {
-          this.saveState.textContent = "Unsaved";
-          this.saveSoon();
-        },
+        onChange: touched,
+        onInkChange: touched,
       });
       this.toolbarSlot.appendChild(this.editor.toolbar);
     }
     this.editor.editor.commands.setContent(this.current.doc as never, { emitUpdate: false });
+    this.editor.setInk(this.current.ink);
     this.editor.editor.setEditable(!this.current.trashedAt);
     this.saveState.textContent = "Saved";
     this.renderEditorChrome();
@@ -574,9 +578,10 @@ export class App {
   private async persist(): Promise<void> {
     if (!this.current || !this.editor || this.current.trashedAt) return;
     const doc = this.editor.editor.getJSON();
+    const ink = this.editor.ink.getStrokes();
     this.saveState.textContent = "Saving…";
     try {
-      const updated = await api.updateNote(this.current.id, { doc });
+      const updated = await api.updateNote(this.current.id, { doc, ink });
       this.current = updated;
       this.saveState.textContent = "Saved";
       this.refreshCard(updated);
