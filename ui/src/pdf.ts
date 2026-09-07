@@ -25,6 +25,8 @@ export class PdfBackground {
   private task: PDFDocumentLoadingTask | null = null;
   private observer: IntersectionObserver | null = null;
   private rendered = new Set<number>();
+  /** Each page's width in PDF units, to scale its text layer to the screen. */
+  private baseWidths = new Map<number, number>();
 
   constructor(private readonly onLayout: () => void) {
     this.el.className = "page-bg";
@@ -47,6 +49,7 @@ export class PdfBackground {
       slot.style.aspectRatio = `${view.width} / ${view.height}`;
       slot.style.marginBottom = `${GAP}px`;
       slot.dataset.page = String(n);
+      this.baseWidths.set(n, view.width);
       slots.push(slot);
       page.cleanup();
     }
@@ -71,17 +74,55 @@ export class PdfBackground {
     this.rendered.add(number);
 
     const page = await this.doc.getPage(number);
-    const base = page.getViewport({ scale: 1 });
-    const viewport = page.getViewport({ scale: RENDER_WIDTH / base.width });
+    const unscaled = page.getViewport({ scale: 1 });
+    const viewport = page.getViewport({ scale: RENDER_WIDTH / unscaled.width });
     const canvas = document.createElement("canvas");
     canvas.width = Math.round(viewport.width);
     canvas.height = Math.round(viewport.height);
     const context = canvas.getContext("2d");
     if (!context) return;
-    await page.render({ canvas, canvasContext: context, viewport }).promise;
+    try {
+      await page.render({ canvas, canvasContext: context, viewport }).promise;
+    } catch (err) {
+      // Closing a note mid-render cancels it; that is not a failure.
+      if ((err as { name?: string })?.name === "RenderingCancelledException") return;
+      throw err;
+    }
+
+    // The words the PDF actually contains, laid over the picture of them, so
+    // the document can be selected, copied and searched rather than being an
+    // image of text. The runs are transparent; only the selection shows.
+    const text = document.createElement("div");
+    text.className = "pdf-text";
+    await new pdfjs.TextLayer({
+      textContentSource: page.streamTextContent(),
+      container: text,
+      viewport: unscaled,
+    }).render();
     page.cleanup();
-    slot.replaceChildren(canvas);
+
+    slot.replaceChildren(canvas, text);
     slot.classList.add("ready");
+    this.scaleText(slot);
+  }
+
+  /**
+   * Matches each text layer to the size its page is drawn at. The runs are
+   * positioned in PDF units, so they are laid out once and then scaled,
+   * rather than re-laid out every time the window changes width.
+   */
+  rescale(): void {
+    for (const slot of Array.from(this.el.querySelectorAll<HTMLElement>(".pdf-page.ready"))) {
+      this.scaleText(slot);
+    }
+  }
+
+  private scaleText(slot: HTMLElement): void {
+    const text = slot.querySelector<HTMLElement>(".pdf-text");
+    const base = this.baseWidths.get(Number(slot.dataset.page));
+    if (!text || !base) return;
+    const scale = slot.clientWidth / base;
+    text.style.transform = `scale(${scale})`;
   }
 
   destroy(): void {

@@ -124,6 +124,7 @@ export function createEditor(
     );
     const next = `${Math.round(needed)}px`;
     if (page.style.minHeight !== next) page.style.minHeight = next;
+    background.rescale();
     ink.resize();
   };
 

@@ -1,4 +1,5 @@
 import { open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
+import { readFile } from "@tauri-apps/plugin-fs";
 
 import { api } from "./api";
 import { button, clear, debounce, el, formatDate, icon } from "./dom";
@@ -14,6 +15,16 @@ const SCOPE_LABELS: Record<string, string> = {
   unfiled: "Unfiled",
   trash: "Trash",
 };
+
+/**
+ * The name to give an imported file. A desktop path ends in a filename; an
+ * Android content:// URI often does not, and then the note is named for what
+ * it is until the first line of writing renames it.
+ */
+function fileNameOf(picked: string): string {
+  const tail = decodeURIComponent(picked).split(/[/\\]/).pop() ?? "";
+  return /\.pdf$/i.test(tail) ? tail : "Imported document.pdf";
+}
 
 function scopeKey(scope: Scope): string {
   return "id" in scope ? `${scope.kind}:${scope.id}` : scope.kind;
@@ -470,8 +481,12 @@ export class App {
     });
     if (typeof picked !== "string") return;
     try {
+      // Read here rather than in the backend: Android's picker returns a
+      // content:// URI with no filesystem path behind it, and only the
+      // platform side can open one.
+      const bytes = await readFile(picked);
       const folderId = this.scope.kind === "folder" ? this.scope.id : null;
-      const note = await api.importPdf(picked, folderId);
+      const note = await api.importPdf(fileNameOf(picked), bytes, folderId);
       if (this.scope.kind === "trash") this.scope = { kind: "all" };
       await this.reloadList();
       await this.open(note.id);

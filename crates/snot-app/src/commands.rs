@@ -210,27 +210,27 @@ pub fn attachment_path(state: State<'_, AppState>, id: String) -> Res<String> {
 }
 
 /// Imports a PDF as a note you can write and draw on: the document becomes
-/// the page's background, and the note starts empty on top of it. The bytes
-/// are read here rather than in the webview so a large file never crosses the
-/// IPC boundary.
+/// the page's background, and the note starts empty on top of it.
+///
+/// The bytes arrive from the webview rather than being read from a path here,
+/// because Android's file picker hands back a `content://` URI that only the
+/// platform side knows how to open — there is no filesystem path to read.
 #[tauri::command]
 pub fn import_pdf(
     state: State<'_, AppState>,
-    path: String,
+    name: String,
+    bytes: Vec<u8>,
     folder_id: Option<String>,
 ) -> Res<Note> {
-    let source = PathBuf::from(&path);
-    let name = source
-        .file_name()
-        .and_then(|n| n.to_str())
-        .ok_or("that file has no name")?
-        .to_string();
-    let title = source
-        .file_stem()
-        .and_then(|n| n.to_str())
-        .unwrap_or(&name)
-        .to_string();
-    let bytes = std::fs::read(&source)?;
+    if bytes.is_empty() {
+        return Err(CommandError("that file is empty".into()));
+    }
+    let name = if name.trim().is_empty() {
+        "Imported document.pdf".to_string()
+    } else {
+        name
+    };
+    let title = name.strip_suffix(".pdf").unwrap_or(&name).to_string();
 
     with_store!(state, |s| {
         let note = s.create_note(folder_id.as_deref(), None)?;

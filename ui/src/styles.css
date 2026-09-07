@@ -702,11 +702,61 @@ button { font: inherit; color: inherit; }
 }
 .pdf-page canvas { display: block; width: 100%; height: auto; }
 
+/* The document's real words, laid transparently over the picture of them, so
+   a PDF can be selected, copied and read by a screen reader instead of being
+   an image of text. */
+.pdf-text {
+  /* pdf.js writes its own width/height as a CSS round() over these variables.
+     Without them the expression is invalid, the layer collapses to nothing,
+     and the document looks like a picture of text. */
+  --total-scale-factor: 1;
+  --scale-round-x: 1px;
+  --scale-round-y: 1px;
+  position: absolute;
+  top: 0;
+  left: 0;
+  transform-origin: 0 0;
+  overflow: hidden;
+  line-height: 1;
+  text-size-adjust: none;
+  forced-color-adjust: none;
+  -webkit-user-select: text;
+  user-select: text;
+}
+.pdf-text span,
+.pdf-text br {
+  position: absolute;
+  white-space: pre;
+  color: transparent;
+  transform-origin: 0 0;
+  cursor: text;
+  -webkit-user-select: text;
+  user-select: text;
+}
+.pdf-text ::selection { background: rgba(47, 143, 78, .42); }
+.pdf-text span::selection { background: rgba(47, 143, 78, .42); }
+.pdf-text .endOfContent {
+  position: absolute;
+  inset: 100% 0 0 0;
+  display: block;
+  z-index: -1;
+  cursor: default;
+  user-select: none;
+}
+
 /* Over a document the page is white paper, whatever the app's theme, so the
    text and the default pen have to be dark to be legible on it. */
 .page.has-background {
   --ink-default: #1f2937;
   padding: 10px 0;
+}
+
+/* With a document behind it the pages sit in the flow and anything typed goes
+   underneath, rather than the editor covering the PDF and making its text
+   unreachable. */
+.page.has-background .page-bg {
+  position: static;
+  pointer-events: auto;
 }
 .page.has-background .prose { color: #16181a; caret-color: #16181a; padding: 0; }
 .page.has-background .prose .is-editor-empty:first-child::before { content: none; }
@@ -836,3 +886,4 @@ button { font: inherit; color: inherit; }
 @media (prefers-reduced-motion: reduce) {
   * { transition: none !important; }
 }
+

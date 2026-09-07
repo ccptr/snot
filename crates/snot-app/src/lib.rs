@@ -19,6 +19,7 @@ pub struct AppState {
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_fs::init())
         .setup(|app| {
             // One library per install, in the platform's app-data directory.
             // Overridable so a test run or a second profile can point elsewhere.
