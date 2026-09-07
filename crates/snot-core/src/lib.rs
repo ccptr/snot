@@ -7,6 +7,7 @@
 pub mod error;
 pub mod export;
 pub mod model;
+pub mod seed;
 pub mod store;
 
 pub use error::{Error, Result};

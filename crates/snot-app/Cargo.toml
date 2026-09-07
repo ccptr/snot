@@ -25,3 +25,6 @@ mime_guess = "2"
 [features]
 # Used by `tauri dev`/`tauri build` to enable the custom-protocol path.
 custom-protocol = ["tauri/custom-protocol"]
+# Starts a new library with the full worked example instead of the welcome
+# note. For testing and screenshots — never enable it in a release build.
+demo-library = []

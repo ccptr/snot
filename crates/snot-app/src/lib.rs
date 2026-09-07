@@ -32,6 +32,12 @@ pub fn run() {
             // library can live anywhere, so grant its own directory too.
             app.asset_protocol_scope().allow_directory(&root, true)?;
             let store = Store::open(&root)?;
+            // A first launch opens onto a welcome note rather than an empty
+            // window that explains nothing. SNOT_DEMO (or the demo-library
+            // feature, for mobile test builds) swaps that for a full worked
+            // example instead — for testing, never for a real user.
+            let demo = cfg!(feature = "demo-library") || std::env::var_os("SNOT_DEMO").is_some();
+            store.seed_if_new(demo)?;
             app.manage(AppState {
                 store: Mutex::new(store),
             });

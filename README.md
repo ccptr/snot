@@ -62,6 +62,12 @@ sit on an empty part of the page — a shape the text flow cannot hold.
 
 Set `SNOT_LIBRARY` to point the app at a different directory.
 
+A first launch lays down a single welcome note. For testing or screenshots,
+`SNOT_DEMO=1` starts a new library with a full worked example instead — folders,
+tags, handwriting, favourites and a populated trash. It is opt-in and never
+reaches a real user; mobile test builds can enable the `demo-library` feature
+for the same thing.
+
 ## Build it
 
 Prerequisites: [Rust](https://rustup.rs), Node 20+, and the

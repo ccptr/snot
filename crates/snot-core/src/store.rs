@@ -111,7 +111,17 @@ impl Store {
         &self.root
     }
 
-    fn set_meta(&self, key: &str, value: &str) -> Result<()> {
+    /// Reads a library-level setting, e.g. whether the examples were laid down.
+    pub(crate) fn meta(&self, key: &str) -> Result<Option<String>> {
+        Ok(self
+            .conn
+            .query_row("SELECT value FROM meta WHERE key = ?1", params![key], |r| {
+                r.get(0)
+            })
+            .optional()?)
+    }
+
+    pub(crate) fn set_meta(&self, key: &str, value: &str) -> Result<()> {
         self.conn.execute(
             "INSERT INTO meta(key, value) VALUES (?1, ?2)
              ON CONFLICT(key) DO UPDATE SET value = excluded.value",
@@ -702,6 +712,16 @@ impl Store {
             .join("attachments")
             .join(&sha[..2])
             .join(format!("{sha}{ext}")))
+    }
+
+    /// Rewrites a note's timestamps. Only the examples use this — real notes
+    /// are dated by when they were actually written.
+    pub(crate) fn backdate(&self, id: &str, created_at: Millis, updated_at: Millis) -> Result<()> {
+        self.conn.execute(
+            "UPDATE notes SET created_at = ?2, updated_at = ?3 WHERE id = ?1",
+            params![id, created_at, updated_at],
+        )?;
+        Ok(())
     }
 
     pub fn stats(&self) -> Result<(i64, i64, i64)> {

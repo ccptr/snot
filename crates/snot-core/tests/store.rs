@@ -327,3 +327,87 @@ fn a_note_with_no_text_keeps_the_name_it_was_given() {
         .unwrap();
     assert_eq!(n.summary.title, "Notes on the lease");
 }
+
+#[test]
+fn a_new_library_gets_the_demo_examples_exactly_once() {
+    let s = Store::open_in_memory().unwrap();
+    assert!(s.seed_if_new(true).unwrap(), "a fresh library is seeded");
+
+    let notes = s.list_notes(&Scope::All, SortBy::Updated).unwrap();
+    assert!(notes.len() >= 12, "enough to fill a list and scroll it");
+    assert!(notes[0].pinned, "the welcome note is pinned to the top");
+    assert!(
+        s.list_folders().unwrap().len() >= 5,
+        "including nested folders"
+    );
+    assert!(s.list_tags().unwrap().len() >= 5);
+    assert!(!s
+        .list_notes(&Scope::Trash, SortBy::Updated)
+        .unwrap()
+        .is_empty());
+    assert!(
+        s.list_notes(&Scope::Unfiled, SortBy::Updated)
+            .unwrap()
+            .len()
+            >= 2,
+        "some notes sit outside any folder"
+    );
+
+    // Dates should span more than a day, so the list is not a wall of
+    // identical timestamps.
+    let newest = notes.iter().map(|n| n.updated_at).max().unwrap();
+    let oldest = notes.iter().map(|n| n.updated_at).min().unwrap();
+    assert!(
+        newest - oldest > 24 * 3_600_000,
+        "examples are spread over time"
+    );
+    assert!(
+        notes.iter().any(|n| n.has_ink),
+        "one example is handwritten"
+    );
+    assert!(notes.iter().any(|n| n.favorite));
+    assert!(!s.search("sourdough", &Scope::All).unwrap().is_empty());
+
+    // Seeding is once per library, so clearing the examples out keeps them out.
+    assert!(!s.seed_if_new(true).unwrap());
+    for note in s.list_notes(&Scope::All, SortBy::Updated).unwrap() {
+        s.purge_note(&note.id).unwrap();
+    }
+    assert!(!s.seed_if_new(true).unwrap());
+    assert!(s
+        .list_notes(&Scope::All, SortBy::Updated)
+        .unwrap()
+        .is_empty());
+}
+
+#[test]
+fn a_library_that_already_has_notes_is_never_seeded() {
+    let s = Store::open_in_memory().unwrap();
+    s.create_note(None, Some(doc("mine"))).unwrap();
+    assert!(!s.seed_if_new(false).unwrap());
+    assert!(!s.seed_if_new(true).unwrap());
+    assert_eq!(s.list_notes(&Scope::All, SortBy::Updated).unwrap().len(), 1);
+}
+
+#[test]
+fn a_real_first_launch_gets_one_welcome_note_and_nothing_to_tidy_up() {
+    let s = Store::open_in_memory().unwrap();
+    assert!(s.seed_if_new(false).unwrap());
+
+    let notes = s.list_notes(&Scope::All, SortBy::Updated).unwrap();
+    assert_eq!(
+        notes.len(),
+        1,
+        "a real user gets one note, not a fake library"
+    );
+    assert!(notes[0].title.contains("Welcome"));
+    assert!(
+        s.list_folders().unwrap().is_empty(),
+        "no folders to clean up"
+    );
+    assert!(s.list_tags().unwrap().is_empty());
+    assert!(s
+        .list_notes(&Scope::Trash, SortBy::Updated)
+        .unwrap()
+        .is_empty());
+}
