@@ -113,9 +113,6 @@ fn block(node: &Value, out: &mut String, depth: usize) {
                 .unwrap_or("image");
             out.push_str(&format!("![{alt}]({src})\n\n"));
         }
-        // Ink has no Markdown spelling; name it so the export is not silently
-        // lossy about a note that is mostly a drawing.
-        "ink" => out.push_str("*[handwritten drawing]*\n\n"),
         _ => {
             for child in children(node) {
                 block(child, out, depth);

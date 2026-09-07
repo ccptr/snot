@@ -264,6 +264,25 @@ pub fn export_markdown(state: State<'_, AppState>, id: String) -> Res<String> {
             out.push_str("\n\n");
         }
         out.push_str(&snot_core::doc_to_markdown(&note.doc));
+
+        // Handwriting and an imported background have no Markdown spelling.
+        // Say so rather than handing back a file that quietly lost them.
+        let strokes = note.ink.as_array().map_or(0, |s| s.len());
+        if strokes > 0 || !note.background.is_null() {
+            out.push_str("\n---\n\n");
+            if let Some(name) = note.background.get("name").and_then(|n| n.as_str()) {
+                out.push_str(&format!("*This note is written on `{name}`"));
+                if strokes > 0 {
+                    out.push_str(&format!(", with {strokes} handwritten strokes"));
+                }
+                out.push_str(", which Markdown cannot carry.*\n");
+            } else {
+                out.push_str(&format!(
+                    "*This note carries {strokes} handwritten strokes, \
+                     which Markdown cannot carry.*\n"
+                ));
+            }
+        }
         Ok(out)
     })
 }

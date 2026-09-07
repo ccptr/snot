@@ -218,6 +218,7 @@ fn markdown_export_round_trips_the_shapes_a_note_actually_uses() {
         ]}
     ]});
     let md = doc_to_markdown(&doc);
+    assert!(!md.contains("ink"), "page ink is not part of the document");
     assert!(md.contains("## Groceries"));
     assert!(md.contains("- [x] milk"));
     assert!(md.contains("- [ ] eggs"));
