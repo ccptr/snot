@@ -1,4 +1,4 @@
-import { save as saveDialog } from "@tauri-apps/plugin-dialog";
+import { open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
 
 import { api } from "./api";
 import { button, clear, debounce, el, formatDate, icon } from "./dom";
@@ -94,6 +94,10 @@ export class App {
         button({
           label: "Sort", icon: "sort", class: "btn ghost icon-only", showLabel: false,
           onClick: (ev) => this.sortMenu(ev.currentTarget as HTMLElement),
+        }),
+        button({
+          label: "Import a PDF", icon: "import", class: "btn ghost icon-only", showLabel: false,
+          onClick: () => void this.importPdf(),
         }),
         button({
           label: "New note", icon: "plus", class: "btn primary icon-only", showLabel: false,
@@ -457,6 +461,26 @@ export class App {
     this.editor?.editor.commands.focus("start");
   }
 
+  /** Brings a PDF in as a note: the document becomes the page to write on. */
+  private async importPdf(): Promise<void> {
+    this.saveSoon.flush();
+    const picked = await openDialog({
+      multiple: false,
+      filters: [{ name: "PDF", extensions: ["pdf"] }],
+    });
+    if (typeof picked !== "string") return;
+    try {
+      const folderId = this.scope.kind === "folder" ? this.scope.id : null;
+      const note = await api.importPdf(picked, folderId);
+      if (this.scope.kind === "trash") this.scope = { kind: "all" };
+      await this.reloadList();
+      await this.open(note.id);
+      toast("Imported — pick up the pen to annotate it");
+    } catch (err) {
+      toast(`Could not import that PDF: ${err}`, "error");
+    }
+  }
+
   private async open(id: string): Promise<void> {
     this.saveSoon.flush();
     try {
@@ -483,6 +507,7 @@ export class App {
     }
     this.editor.editor.commands.setContent(this.current.doc as never, { emitUpdate: false });
     this.editor.setInk(this.current.ink);
+    await this.editor.setBackground(this.current.background);
     this.editor.editor.setEditable(!this.current.trashedAt);
     this.saveState.textContent = "Saved";
     this.renderEditorChrome();

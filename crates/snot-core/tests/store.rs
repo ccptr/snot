@@ -285,3 +285,44 @@ fn page_ink_round_trips_and_flags_the_summary() {
     assert_eq!(n.ink, strokes);
     assert_eq!(n.summary.title, "meeting notes");
 }
+
+#[test]
+fn a_note_with_no_text_keeps_the_name_it_was_given() {
+    let s = Store::open_in_memory().unwrap();
+    let n = s.create_note(None, Some(doc("scratch"))).unwrap();
+    let id = n.summary.id;
+    s.update_note(
+        &id,
+        NotePatch {
+            title: Some("lease.pdf".into()),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+
+    // Saving an empty body — an imported PDF, or a page that is only ink —
+    // must not blank the title.
+    let empty = json!({"type":"doc","content":[{"type":"paragraph"}]});
+    let n = s
+        .update_note(
+            &id,
+            NotePatch {
+                doc: Some(empty),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    assert_eq!(n.summary.title, "lease.pdf");
+
+    // Typing brings the title back in step with the first line.
+    let n = s
+        .update_note(
+            &id,
+            NotePatch {
+                doc: Some(doc("Notes on the lease")),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    assert_eq!(n.summary.title, "Notes on the lease");
+}

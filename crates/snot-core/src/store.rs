@@ -33,6 +33,7 @@ CREATE TABLE IF NOT EXISTS notes (
     title      TEXT NOT NULL DEFAULT '',
     doc        TEXT NOT NULL,
     ink        TEXT NOT NULL DEFAULT '[]',
+    background TEXT NOT NULL DEFAULT 'null',
     preview    TEXT NOT NULL DEFAULT '',
     color      TEXT,
     pinned     INTEGER NOT NULL DEFAULT 0,
@@ -288,12 +289,12 @@ impl Store {
     }
 
     pub fn get_note(&self, id: &str) -> Result<Note> {
-        let (doc, ink): (String, String) = self
+        let (doc, ink, background): (String, String, String) = self
             .conn
             .query_row(
-                "SELECT doc, ink FROM notes WHERE id = ?1",
+                "SELECT doc, ink, background FROM notes WHERE id = ?1",
                 params![id],
-                |r| Ok((r.get(0)?, r.get(1)?)),
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
             )
             .optional()?
             .ok_or_else(|| Error::NotFound(format!("note {id}")))?;
@@ -302,6 +303,7 @@ impl Store {
             summary,
             doc: serde_json::from_str(&doc)?,
             ink: serde_json::from_str(&ink)?,
+            background: serde_json::from_str(&background)?,
         })
     }
 
@@ -310,7 +312,8 @@ impl Store {
             .conn
             .query_row(
                 "SELECT id, folder_id, title, preview, color, pinned, favorite, locked,
-                        created_at, updated_at, trashed_at, ink <> '[]'
+                        created_at, updated_at, trashed_at, ink <> '[]',
+                        background <> 'null'
                  FROM notes WHERE id = ?1",
                 params![id],
                 row_to_summary,
@@ -348,8 +351,24 @@ impl Store {
         if let Some(doc) = &patch.doc {
             let text = doc_to_text(doc);
             // An explicit title in the same patch wins; otherwise the first
-            // line of the body keeps the title in step with the content.
-            let title = patch.title.clone().unwrap_or_else(|| derive_title(&text));
+            // line of the body keeps the title in step with the content. A
+            // body with no text at all leaves the title alone, so a note that
+            // is only handwriting — or an imported PDF — keeps its name.
+            let title = match patch.title.clone() {
+                Some(title) => title,
+                None => {
+                    let derived = derive_title(&text);
+                    if derived.is_empty() {
+                        self.conn.query_row(
+                            "SELECT title FROM notes WHERE id = ?1",
+                            params![id],
+                            |r| r.get(0),
+                        )?
+                    } else {
+                        derived
+                    }
+                }
+            };
             let preview = derive_preview(&text);
             self.conn.execute(
                 "UPDATE notes SET doc = ?2, title = ?3, preview = ?4, updated_at = ?5 WHERE id = ?1",
@@ -377,6 +396,12 @@ impl Store {
             self.conn.execute(
                 "UPDATE notes SET ink = ?2, updated_at = ?3 WHERE id = ?1",
                 params![id, serde_json::to_string(ink)?, now],
+            )?;
+        }
+        if let Some(background) = &patch.background {
+            self.conn.execute(
+                "UPDATE notes SET background = ?2, updated_at = ?3 WHERE id = ?1",
+                params![id, serde_json::to_string(background)?, now],
             )?;
         }
         if let Some(folder_id) = &patch.folder_id {
@@ -486,7 +511,8 @@ impl Store {
         };
         let sql = format!(
             "SELECT n.id, n.folder_id, n.title, n.preview, n.color, n.pinned, n.favorite,
-                    n.locked, n.created_at, n.updated_at, n.trashed_at, n.ink <> '[]'
+                    n.locked, n.created_at, n.updated_at, n.trashed_at, n.ink <> '[]',
+                    n.background <> 'null'
              FROM notes n WHERE {where_clause} ORDER BY {order}"
         );
         let mut stmt = self.conn.prepare(&sql)?;
@@ -511,6 +537,7 @@ impl Store {
         let sql = format!(
             "SELECT n.id, n.folder_id, n.title, n.preview, n.color, n.pinned, n.favorite,
                     n.locked, n.created_at, n.updated_at, n.trashed_at, n.ink <> '[]',
+                    n.background <> 'null',
                     snippet(notes_fts, 2, '\u{2039}', '\u{203a}', '\u{2026}', 14)
              FROM notes_fts
              JOIN notes n ON n.id = notes_fts.note_id
@@ -521,7 +548,7 @@ impl Store {
         let mut stmt = self.conn.prepare(&sql)?;
         let rows = stmt.query_map(params![fts], |r| {
             let mut s = row_to_summary(r)?;
-            s.snippet = r.get(12)?;
+            s.snippet = r.get(13)?;
             Ok(s)
         })?;
         let mut out: Vec<NoteSummary> = rows.collect::<std::result::Result<_, _>>()?;
@@ -709,6 +736,7 @@ fn row_to_summary(r: &Row<'_>) -> rusqlite::Result<NoteSummary> {
         updated_at: r.get(9)?,
         trashed_at: r.get(10)?,
         has_ink: r.get::<_, i64>(11)? != 0,
+        has_background: r.get::<_, i64>(12)? != 0,
         tags: vec![],
         snippet: None,
     })

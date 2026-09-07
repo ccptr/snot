@@ -30,6 +30,7 @@ export interface NoteSummary {
   trashedAt: number | null;
   tags: string[];
   hasInk: boolean;
+  hasBackground: boolean;
   snippet?: string;
 }
 
@@ -37,6 +38,8 @@ export interface Note extends NoteSummary {
   doc: unknown;
   /** Page handwriting: an array of vector strokes drawn across the note. */
   ink: unknown;
+  /** What the page is written on: null, or an imported document descriptor. */
+  background: unknown;
 }
 
 /** Omitted fields are left alone; an explicit `null` clears the field. */
@@ -44,6 +47,7 @@ export interface NotePatch {
   title?: string;
   doc?: unknown;
   ink?: unknown;
+  background?: unknown;
   folderId?: string | null;
   color?: string | null;
   pinned?: boolean;

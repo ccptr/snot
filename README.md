@@ -16,7 +16,8 @@ not built yet. See [Roadmap](#roadmap).
 | | |
 |---|---|
 | **Rich text** | Headings, bold/italic/underline/strike, highlight in five colours, bulleted, numbered and **checklists**, quotes, code blocks, dividers, alignment |
-| **Ink** | Pressure-sensitive vector strokes, pen and marker, stroke eraser, ruled guides, resizable canvas, **palm rejection** once a stylus is seen |
+| **Ink** | **Draw anywhere on the page** — over, around and between the text, no drawing box. Pressure-sensitive vector strokes, pen and marker, stroke eraser, and **palm rejection** once a stylus is seen |
+| **PDFs** | Import a PDF as a note and write on it. Pages render lazily, so a long document opens at once and costs only what you look at |
 | **Organise** | Nested folders, tags, favourites, pinning, drag a note onto a folder to file it |
 | **Find** | Full-text search over every title and body, prefix-matching as you type, with the matched phrase highlighted in the result |
 | **Safety** | Deletes go to a trash you can restore from; nothing is destroyed until you empty it |
@@ -24,7 +25,9 @@ not built yet. See [Roadmap](#roadmap).
 | **Fits the screen** | Three panes on a desktop, one pane with a drawer on a phone, light and dark following the system |
 
 Ink is stored as vectors, not a bitmap: a drawing made on a phone reopens on a
-desktop at the same proportions and stays sharp at any zoom.
+desktop at the same proportions and stays sharp at any zoom. The default pen is
+stored as a token rather than a colour, so a note written in dark mode is not
+invisible when it is reopened in light mode.
 
 ## Platforms
 
@@ -51,6 +54,11 @@ The library on disk:
   snot.db                SQLite: notes, folders, tags, attachments, FTS5 index
   attachments/ab/ab12…   content-addressed blobs — the same image pasted twice is stored once
 ```
+
+A note is three independent things: a rich-text document, an array of ink
+strokes, and an optional background document. Handwriting sits beside the text
+rather than inside it, because a stroke can cross any number of paragraphs or
+sit on an empty part of the page — a shape the text flow cannot hold.
 
 Set `SNOT_LIBRARY` to point the app at a different directory.
 
@@ -88,7 +96,7 @@ Android additionally needs the Android SDK, the NDK, and
 ## Roadmap
 
 - [ ] Sync — end-to-end encrypted, over any file-sync service or a self-hosted server
-- [ ] PDF import and annotation
+- [ ] Selecting, moving and reflowing ink
 - [ ] Voice recordings attached to a note
 - [ ] Note lock (the `locked` flag exists; the encryption does not)
 - [ ] Import from a Samsung Notes export, and from Markdown directories

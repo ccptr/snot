@@ -87,6 +87,7 @@ const PATHS: Record<string, string> = {
   moon: "M20 14.5A8.5 8.5 0 0 1 9.5 4a8.5 8.5 0 1 0 10.5 10.5z",
   sidebar: "M4 5h16v14H4zM10 5v14",
   export: "M12 15V4M8 8l4-4 4 4M5 15v3a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-3",
+  import: "M12 4v11M8 11l4 4 4-4M5 15v3a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-3",
   restore: "M4 10h6V4M4.6 10a8 8 0 1 1 .4 6",
   sort: "M7 4v14M4 15l3 3 3-3M14 6h6M14 12h5M14 18h4",
 };

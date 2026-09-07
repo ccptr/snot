@@ -13,6 +13,7 @@ import { button, el, icon } from "./dom";
 import {
   DEFAULT_INK, INK_COLORS, INK_SIZES, InkLayer, MARKER_COLORS, type ToolState,
 } from "./ink";
+import { PdfBackground } from "./pdf";
 
 const HIGHLIGHTS = ["#fef08a", "#bbf7d0", "#bfdbfe", "#fbcfe8", "#fed7aa"];
 
@@ -22,6 +23,8 @@ export interface NoteEditor {
   ink: InkLayer;
   /** Loads a different note's handwriting and leaves pen mode. */
   setInk(strokes: unknown): void;
+  /** Shows an imported document behind the page, or clears it. */
+  setBackground(background: unknown): Promise<void>;
   destroy(): void;
 }
 
@@ -53,6 +56,9 @@ export function createEditor(
   // box carved out of the text flow.
   const page = el("div", { class: "page" });
   mount.appendChild(page);
+
+  const background = new PdfBackground(() => syncPage());
+  page.appendChild(background.el);
 
   const editor = new Editor({
     element: page,
@@ -104,12 +110,16 @@ export function createEditor(
   const ink = new InkLayer(page, tools, opts.onInkChange);
   page.appendChild(ink.el);
 
-  /** Keeps the page tall enough for its text and for ink drawn below it. */
+  /**
+   * Keeps the page tall enough for everything on it: the text, an imported
+   * document behind it, and any ink drawn below both.
+   */
   const syncPage = () => {
     const prose = page.querySelector<HTMLElement>(".ProseMirror");
     const needed = Math.max(
       mount.clientHeight,
       (prose?.scrollHeight ?? 0) + 40,
+      background.el.offsetHeight,
       ink.inkDepth() + 160,
     );
     const next = `${Math.round(needed)}px`;
@@ -138,7 +148,20 @@ export function createEditor(
       ink.setStrokes(strokes);
       syncPage();
     },
+    async setBackground(descriptor: unknown) {
+      const bg = descriptor as { kind?: string; attachmentId?: string } | null;
+      if (!bg || bg.kind !== "pdf" || !bg.attachmentId) {
+        background.destroy();
+        page.classList.remove("has-background");
+        syncPage();
+        return;
+      }
+      page.classList.add("has-background");
+      const path = await api.attachmentPath(bg.attachmentId);
+      await background.load(convertFileSrc(path));
+    },
     destroy() {
+      background.destroy();
       observer.disconnect();
       editor.off("transaction", refresh);
       editor.off("selectionUpdate", refresh);

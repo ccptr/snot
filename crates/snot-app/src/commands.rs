@@ -51,7 +51,11 @@ pub struct Stats {
 pub fn stats(state: State<'_, AppState>) -> Res<Stats> {
     with_store!(state, |s| {
         let (notes, trashed, folders) = s.stats()?;
-        Ok(Stats { notes, trashed, folders })
+        Ok(Stats {
+            notes,
+            trashed,
+            folders,
+        })
     })
 }
 
@@ -77,20 +81,12 @@ pub fn rename_folder(state: State<'_, AppState>, id: String, name: String) -> Re
 }
 
 #[tauri::command]
-pub fn set_folder_color(
-    state: State<'_, AppState>,
-    id: String,
-    color: Option<String>,
-) -> Res<()> {
+pub fn set_folder_color(state: State<'_, AppState>, id: String, color: Option<String>) -> Res<()> {
     with_store!(state, |s| Ok(s.set_folder_color(&id, color.as_deref())?))
 }
 
 #[tauri::command]
-pub fn move_folder(
-    state: State<'_, AppState>,
-    id: String,
-    parent_id: Option<String>,
-) -> Res<()> {
+pub fn move_folder(state: State<'_, AppState>, id: String, parent_id: Option<String>) -> Res<()> {
     with_store!(state, |s| Ok(s.move_folder(&id, parent_id.as_deref())?))
 }
 
@@ -102,11 +98,7 @@ pub fn delete_folder(state: State<'_, AppState>, id: String) -> Res<()> {
 // ------------------------------------------------------------------ notes
 
 #[tauri::command]
-pub fn list_notes(
-    state: State<'_, AppState>,
-    scope: Scope,
-    sort: SortBy,
-) -> Res<Vec<NoteSummary>> {
+pub fn list_notes(state: State<'_, AppState>, scope: Scope, sort: SortBy) -> Res<Vec<NoteSummary>> {
     with_store!(state, |s| Ok(s.list_notes(&scope, sort)?))
 }
 
@@ -195,17 +187,68 @@ pub fn put_attachment(
     bytes: Vec<u8>,
 ) -> Res<StoredAttachment> {
     let mime = mime.unwrap_or_else(|| {
-        mime_guess::from_path(&name).first_or_octet_stream().essence_str().to_string()
+        mime_guess::from_path(&name)
+            .first_or_octet_stream()
+            .essence_str()
+            .to_string()
     });
     with_store!(state, |s| {
         let (attachment, path) = s.put_attachment(note_id.as_deref(), &name, &mime, &bytes)?;
-        Ok(StoredAttachment { attachment, path: path.to_string_lossy().into_owned() })
+        Ok(StoredAttachment {
+            attachment,
+            path: path.to_string_lossy().into_owned(),
+        })
     })
 }
 
 #[tauri::command]
 pub fn attachment_path(state: State<'_, AppState>, id: String) -> Res<String> {
-    with_store!(state, |s| Ok(s.attachment_path(&id)?.to_string_lossy().into_owned()))
+    with_store!(state, |s| Ok(s
+        .attachment_path(&id)?
+        .to_string_lossy()
+        .into_owned()))
+}
+
+/// Imports a PDF as a note you can write and draw on: the document becomes
+/// the page's background, and the note starts empty on top of it. The bytes
+/// are read here rather than in the webview so a large file never crosses the
+/// IPC boundary.
+#[tauri::command]
+pub fn import_pdf(
+    state: State<'_, AppState>,
+    path: String,
+    folder_id: Option<String>,
+) -> Res<Note> {
+    let source = PathBuf::from(&path);
+    let name = source
+        .file_name()
+        .and_then(|n| n.to_str())
+        .ok_or("that file has no name")?
+        .to_string();
+    let title = source
+        .file_stem()
+        .and_then(|n| n.to_str())
+        .unwrap_or(&name)
+        .to_string();
+    let bytes = std::fs::read(&source)?;
+
+    with_store!(state, |s| {
+        let note = s.create_note(folder_id.as_deref(), None)?;
+        let id = note.summary.id.clone();
+        let (attachment, _) = s.put_attachment(Some(&id), &name, "application/pdf", &bytes)?;
+        Ok(s.update_note(
+            &id,
+            NotePatch {
+                title: Some(title),
+                background: Some(serde_json::json!({
+                    "kind": "pdf",
+                    "attachmentId": attachment.id,
+                    "name": name,
+                })),
+                ..Default::default()
+            },
+        )?)
+    })
 }
 
 // ----------------------------------------------------------------- export

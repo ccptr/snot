@@ -27,8 +27,14 @@ pub fn run() {
                 None => app.path().app_data_dir()?.join("library"),
             };
             std::fs::create_dir_all(&root)?;
+            // Attachments are served to the webview over the asset protocol,
+            // which is scoped to the app-data directory by default. The
+            // library can live anywhere, so grant its own directory too.
+            app.asset_protocol_scope().allow_directory(&root, true)?;
             let store = Store::open(&root)?;
-            app.manage(AppState { store: Mutex::new(store) });
+            app.manage(AppState {
+                store: Mutex::new(store),
+            });
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -54,6 +60,7 @@ pub fn run() {
             commands::delete_tag,
             commands::put_attachment,
             commands::attachment_path,
+            commands::import_pdf,
             commands::export_markdown,
             commands::write_text_file,
         ])

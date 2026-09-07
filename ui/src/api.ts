@@ -41,6 +41,9 @@ export const api = {
     invoke<StoredAttachment>("put_attachment", { noteId, name, mime, bytes: Array.from(bytes) }),
   attachmentPath: (id: string) => invoke<string>("attachment_path", { id }),
 
+  importPdf: (path: string, folderId: string | null) =>
+    invoke<Note>("import_pdf", { path, folderId }),
+
   exportMarkdown: (id: string) => invoke<string>("export_markdown", { id }),
   writeTextFile: (path: string, contents: string) =>
     invoke<void>("write_text_file", { path, contents }),

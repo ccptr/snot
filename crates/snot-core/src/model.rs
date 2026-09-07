@@ -76,6 +76,9 @@ pub struct NoteSummary {
     /// without loading the strokes themselves.
     #[serde(default)]
     pub has_ink: bool,
+    /// Whether the note is written over an imported document.
+    #[serde(default)]
+    pub has_background: bool,
     /// Search-result highlight, only populated by `search`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub snippet: Option<String>,
@@ -94,6 +97,11 @@ pub struct Note {
     /// paragraphs, or sit on a blank part of the page.
     #[serde(default)]
     pub ink: Value,
+    /// What the page is written on: `null` for a blank note, or a descriptor
+    /// of an imported document, e.g.
+    /// `{"kind":"pdf","attachmentId":"…","name":"lease.pdf"}`.
+    #[serde(default)]
+    pub background: Value,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -102,6 +110,7 @@ pub struct NotePatch {
     pub title: Option<String>,
     pub doc: Option<Value>,
     pub ink: Option<Value>,
+    pub background: Option<Value>,
     pub folder_id: Option<Option<String>>,
     pub color: Option<Option<String>>,
     pub pinned: Option<bool>,
