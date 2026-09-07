@@ -14,13 +14,23 @@ app.start().catch((err) => {
 // Nothing should fail silently: a dropped promise or a thrown handler is a
 // bug the user has just hit, and they deserve to be told rather than left
 // looking at a page that quietly did nothing.
+/**
+ * A benign browser warning, not a fault: it means a resize handler ran twice
+ * in a frame. Showing it as a failure trains people to ignore real ones.
+ */
+const isNoise = (message: string) => message.includes("ResizeObserver loop");
+
 window.addEventListener("error", (ev) => {
+  const message = String(ev.message ?? ev.error);
+  if (isNoise(message)) return;
   console.error(ev.error ?? ev.message);
-  toast(String(ev.message ?? ev.error), "error");
+  toast(message, "error");
 });
 window.addEventListener("unhandledrejection", (ev) => {
+  const message = String(ev.reason);
+  if (isNoise(message)) return;
   console.error(ev.reason);
-  toast(String(ev.reason), "error");
+  toast(message, "error");
 });
 
 // A right-click menu on a desktop app should be the app's, not the webview's.

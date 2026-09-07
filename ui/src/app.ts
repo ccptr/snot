@@ -153,7 +153,7 @@ export class App {
         if (this.root.classList.contains("sidebar-open")) {
           this.root.classList.remove("sidebar-open");
         } else if (this.root.dataset.pane === "editor") {
-          this.root.dataset.pane = "list";
+          this.showList();
         }
       }
     });
@@ -531,6 +531,18 @@ export class App {
     }
   }
 
+  /**
+   * Shows the note list. The editor has to give up the keyboard as well as
+   * the screen: while it holds focus, anything typed goes into a note nobody
+   * can see — on a phone that silently empties whatever was open.
+   */
+  private showList(): void {
+    this.saveSoon.flush();
+    this.editor?.editor.commands.blur();
+    (document.activeElement as HTMLElement | null)?.blur?.();
+    this.root.dataset.pane = "list";
+  }
+
   private showEmptyEditor(): void {
     this.root.dataset.pane = "list";
     this.emptyState.classList.add("visible");
@@ -552,7 +564,7 @@ export class App {
     this.editorHeader.append(
       button({
         label: "Back", icon: "back", class: "btn ghost icon-only only-stacked", showLabel: false,
-        onClick: () => (this.root.dataset.pane = "list"),
+        onClick: () => this.showList(),
       }),
       el("div", { class: "editor-meta" },
         el("h2", { class: "editor-title", text: note.title || "Untitled note" }),

@@ -128,8 +128,10 @@ export function createEditor(
     ink.resize();
   };
 
+  // Only the pane is watched. Observing the page as well meant reacting to
+  // the height this very function sets, which the browser reports as a
+  // "ResizeObserver loop" and which nothing needs.
   const observer = new ResizeObserver(() => syncPage());
-  observer.observe(page);
   observer.observe(mount);
 
   const { toolbar, tray, setPenMode } = buildToolbar(editor, ink, opts.noteId, syncPage);
