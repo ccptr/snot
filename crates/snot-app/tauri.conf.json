@@ -6,8 +6,8 @@
   "build": {
     "frontendDist": "../../ui/dist",
     "devUrl": "http://localhost:5173",
-    "beforeDevCommand": "npm --prefix ui run dev",
-    "beforeBuildCommand": "npm --prefix ui run build"
+    "beforeDevCommand": "npm run dev",
+    "beforeBuildCommand": "npm run build"
   },
   "app": {
     "withGlobalTauri": false,
@@ -26,7 +26,10 @@
       "csp": "default-src 'self'; img-src 'self' asset: http://asset.localhost data: blob:; media-src 'self' asset: http://asset.localhost blob:; style-src 'self' 'unsafe-inline'; font-src 'self' data:; connect-src 'self' ipc: http://ipc.localhost",
       "assetProtocol": {
         "enable": true,
-        "scope": ["$APPDATA/**", "$APPDATA/library/**"]
+        "scope": [
+          "$APPDATA/**",
+          "$APPDATA/library/**"
+        ]
       }
     }
   },
@@ -44,7 +47,9 @@
       "icons/icon.ico"
     ],
     "linux": {
-      "deb": { "depends": [] }
+      "deb": {
+        "depends": []
+      }
     }
   }
 }

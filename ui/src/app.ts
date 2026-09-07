@@ -507,7 +507,7 @@ export class App {
 
     this.editorHeader.append(
       button({
-        label: "Back", icon: "back", class: "btn ghost icon-only only-narrow", showLabel: false,
+        label: "Back", icon: "back", class: "btn ghost icon-only only-stacked", showLabel: false,
         onClick: () => (this.root.dataset.pane = "list"),
       }),
       el("div", { class: "editor-meta" },

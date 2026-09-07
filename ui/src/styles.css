@@ -101,6 +101,10 @@ button { font: inherit; color: inherit; }
 
 /* --------------------------------------------------------------- sidebar */
 
+/* Grid items default to min-width:auto, which lets a wide child — the
+   formatting toolbar — widen its column and push the pane off-screen. */
+.sidebar, .list-pane, .editor-pane { min-width: 0; }
+
 .sidebar {
   display: flex;
   flex-direction: column;
@@ -356,7 +360,7 @@ button { font: inherit; color: inherit; }
   white-space: nowrap;
 }
 
-.toolbar-slot { border-bottom: 1px solid var(--line-2); }
+.toolbar-slot { border-bottom: 1px solid var(--line-2); min-width: 0; }
 
 .toolbar {
   display: flex;
@@ -747,9 +751,10 @@ button { font: inherit; color: inherit; }
 
 /* ------------------------------------------------------------ responsive */
 
-.only-narrow { display: none; }
+.only-narrow, .only-stacked { display: none; }
 
 @media (max-width: 1080px) {
+  .only-stacked { display: inline-flex; }
   .app { grid-template-columns: var(--sidebar-w) 1fr; }
   .app[data-pane="editor"] .list-pane { display: none; }
   .app[data-pane="list"] .editor-pane { display: none; }
