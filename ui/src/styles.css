@@ -74,7 +74,16 @@
 
 * { box-sizing: border-box; }
 
-html, body, #app { height: 100%; }
+/* The shell must never scroll. On a phone the soft keyboard shrinks the
+   viewport, and a scrollable document slides the header and toolbar up under
+   the status bar; pinning it means only the note body moves. */
+html, body { height: 100%; overflow: hidden; }
+
+#app {
+  position: fixed;
+  inset: 0;
+  overflow: hidden;
+}
 
 body {
   margin: 0;
@@ -97,6 +106,7 @@ button { font: inherit; color: inherit; }
   display: grid;
   grid-template-columns: var(--sidebar-w) var(--list-w) 1fr;
   height: 100%;
+  overflow: hidden;
   padding-top: env(safe-area-inset-top);
 }
 
