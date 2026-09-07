@@ -32,6 +32,7 @@ CREATE TABLE IF NOT EXISTS notes (
     folder_id  TEXT REFERENCES folders(id) ON DELETE SET NULL,
     title      TEXT NOT NULL DEFAULT '',
     doc        TEXT NOT NULL,
+    ink        TEXT NOT NULL DEFAULT '[]',
     preview    TEXT NOT NULL DEFAULT '',
     color      TEXT,
     pinned     INTEGER NOT NULL DEFAULT 0,
@@ -92,7 +93,8 @@ impl Store {
         let conn = Connection::open(root.join("snot.db"))?;
         conn.execute_batch(SCHEMA)?;
         let store = Store { conn, root };
-        store.set_meta("schema_version", "1")?;
+        store.migrate()?;
+        store.set_meta("schema_version", "2")?;
         Ok(store)
     }
 
@@ -103,6 +105,21 @@ impl Store {
             conn,
             root: PathBuf::from("."),
         })
+    }
+
+    /// Brings a library written by an older build up to the current schema.
+    fn migrate(&self) -> Result<()> {
+        let mut stmt = self.conn.prepare("PRAGMA table_info(notes)")?;
+        let columns: Vec<String> = stmt
+            .query_map([], |r| r.get::<_, String>(1))?
+            .collect::<std::result::Result<_, _>>()?;
+        if !columns.iter().any(|c| c == "ink") {
+            self.conn.execute(
+                "ALTER TABLE notes ADD COLUMN ink TEXT NOT NULL DEFAULT '[]'",
+                [],
+            )?;
+        }
+        Ok(())
     }
 
     pub fn root(&self) -> &Path {
@@ -287,17 +304,20 @@ impl Store {
     }
 
     pub fn get_note(&self, id: &str) -> Result<Note> {
-        let doc: String = self
+        let (doc, ink): (String, String) = self
             .conn
-            .query_row("SELECT doc FROM notes WHERE id = ?1", params![id], |r| {
-                r.get(0)
-            })
+            .query_row(
+                "SELECT doc, ink FROM notes WHERE id = ?1",
+                params![id],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
             .optional()?
             .ok_or_else(|| Error::NotFound(format!("note {id}")))?;
         let summary = self.get_summary(id)?;
         Ok(Note {
             summary,
             doc: serde_json::from_str(&doc)?,
+            ink: serde_json::from_str(&ink)?,
         })
     }
 
@@ -306,7 +326,7 @@ impl Store {
             .conn
             .query_row(
                 "SELECT id, folder_id, title, preview, color, pinned, favorite, locked,
-                        created_at, updated_at, trashed_at
+                        created_at, updated_at, trashed_at, ink <> '[]'
                  FROM notes WHERE id = ?1",
                 params![id],
                 row_to_summary,
@@ -369,6 +389,12 @@ impl Store {
             self.reindex(id, title, &body)?;
         }
 
+        if let Some(ink) = &patch.ink {
+            self.conn.execute(
+                "UPDATE notes SET ink = ?2, updated_at = ?3 WHERE id = ?1",
+                params![id, serde_json::to_string(ink)?, now],
+            )?;
+        }
         if let Some(folder_id) = &patch.folder_id {
             self.conn.execute(
                 "UPDATE notes SET folder_id = ?2, updated_at = ?3 WHERE id = ?1",
@@ -476,7 +502,7 @@ impl Store {
         };
         let sql = format!(
             "SELECT n.id, n.folder_id, n.title, n.preview, n.color, n.pinned, n.favorite,
-                    n.locked, n.created_at, n.updated_at, n.trashed_at
+                    n.locked, n.created_at, n.updated_at, n.trashed_at, n.ink <> '[]'
              FROM notes n WHERE {where_clause} ORDER BY {order}"
         );
         let mut stmt = self.conn.prepare(&sql)?;
@@ -500,7 +526,7 @@ impl Store {
         };
         let sql = format!(
             "SELECT n.id, n.folder_id, n.title, n.preview, n.color, n.pinned, n.favorite,
-                    n.locked, n.created_at, n.updated_at, n.trashed_at,
+                    n.locked, n.created_at, n.updated_at, n.trashed_at, n.ink <> '[]',
                     snippet(notes_fts, 2, '\u{2039}', '\u{203a}', '\u{2026}', 14)
              FROM notes_fts
              JOIN notes n ON n.id = notes_fts.note_id
@@ -511,7 +537,7 @@ impl Store {
         let mut stmt = self.conn.prepare(&sql)?;
         let rows = stmt.query_map(params![fts], |r| {
             let mut s = row_to_summary(r)?;
-            s.snippet = r.get(11)?;
+            s.snippet = r.get(12)?;
             Ok(s)
         })?;
         let mut out: Vec<NoteSummary> = rows.collect::<std::result::Result<_, _>>()?;
@@ -698,6 +724,7 @@ fn row_to_summary(r: &Row<'_>) -> rusqlite::Result<NoteSummary> {
         created_at: r.get(8)?,
         updated_at: r.get(9)?,
         trashed_at: r.get(10)?,
+        has_ink: r.get::<_, i64>(11)? != 0,
         tags: vec![],
         snippet: None,
     })

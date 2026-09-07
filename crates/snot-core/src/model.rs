@@ -72,6 +72,10 @@ pub struct NoteSummary {
     pub trashed_at: Option<Millis>,
     #[serde(default)]
     pub tags: Vec<String>,
+    /// Whether the note carries page ink, so a list can show a pen glyph
+    /// without loading the strokes themselves.
+    #[serde(default)]
+    pub has_ink: bool,
     /// Search-result highlight, only populated by `search`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub snippet: Option<String>,
@@ -84,6 +88,12 @@ pub struct Note {
     pub summary: NoteSummary,
     /// ProseMirror document JSON.
     pub doc: Value,
+    /// Handwriting drawn across the whole page, as an array of vector
+    /// strokes. It sits beside the document rather than inside it because it
+    /// is not part of the text flow — a stroke can cross any number of
+    /// paragraphs, or sit on a blank part of the page.
+    #[serde(default)]
+    pub ink: Value,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -91,6 +101,7 @@ pub struct Note {
 pub struct NotePatch {
     pub title: Option<String>,
     pub doc: Option<Value>,
+    pub ink: Option<Value>,
     pub folder_id: Option<Option<String>>,
     pub color: Option<Option<String>>,
     pub pinned: Option<bool>,
@@ -172,9 +183,8 @@ fn walk(node: &Value, out: &mut String) {
                 out.push_str(t);
             }
         }
-        // Ink and images carry no text; a marker keeps the preview honest
-        // about a note that is entirely a drawing.
-        Some("ink") => out.push_str("\u{270e} drawing\n"),
+        // Images carry no text; a marker keeps the preview honest about a
+        // note that is entirely pictures.
         Some("image") => {
             let alt = node
                 .get("attrs")
@@ -190,7 +200,7 @@ fn walk(node: &Value, out: &mut String) {
     let is_block = node
         .get("type")
         .and_then(Value::as_str)
-        .is_some_and(|t| !matches!(t, "text" | "hardBreak" | "ink" | "image"));
+        .is_some_and(|t| !matches!(t, "text" | "hardBreak" | "image"));
 
     if let Some(children) = node.get("content").and_then(Value::as_array) {
         for child in children {
