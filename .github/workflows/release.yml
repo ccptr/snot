@@ -144,8 +144,15 @@ jobs:
       - name: Unpack the signing key
         env:
           APK_KEYSTORE_B64: ${{ secrets.APK_KEYSTORE_B64 }}
+          VARIANT: ${{ needs.variant.outputs.name }}
         run: |
           set -euo pipefail
+          # An unset secret decodes to an empty file that exists, so the run
+          # would limp on and fail inside apksigner instead of saying why.
+          if [ -z "${APK_KEYSTORE_B64:-}" ]; then
+            echo "::error::APK_KEYSTORE_B64 is not set in the '$VARIANT' environment"
+            exit 1
+          fi
           umask 077
           printf '%s' "$APK_KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/apk.p12"
 
