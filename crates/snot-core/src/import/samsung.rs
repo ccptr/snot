@@ -378,8 +378,13 @@ fn runs_at(bytes: &[u8], offset: usize) -> Vec<(usize, usize, String)> {
         }
         run.clear();
     };
-    for (i, pair) in bytes[offset.min(bytes.len())..].chunks_exact(2).enumerate() {
-        let unit = u16::from_le_bytes([pair[0], pair[1]]);
+    for (i, pair) in bytes[offset.min(bytes.len())..]
+        .as_chunks::<2>()
+        .0
+        .iter()
+        .enumerate()
+    {
+        let unit = u16::from_le_bytes(*pair);
         // Keep the printable plane and the surrogates that pair up into it;
         // anything else ends the run.
         let printable = match char::from_u32(unit as u32) {
