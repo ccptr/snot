@@ -8,6 +8,12 @@ on:
 env:
   CARGO_TERM_COLOR: always
 
+# Only the newest commit on a branch or PR is worth checking; a push that
+# supersedes a running check cancels it.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   core:
     name: core (${{ matrix.os }})

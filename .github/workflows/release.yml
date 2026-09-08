@@ -32,9 +32,13 @@ on:
 permissions:
   contents: read
 
+# Superseded builds are pointless: only the newest commit on main should
+# become the nightly. Each tag is its own group, so a release build is never
+# cancelled by an unrelated push. Cancelling fails safe — a half-uploaded
+# release asset is rejected downstream by the signature check.
 concurrency:
   group: release-${{ github.ref }}
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 jobs:
   variant:
