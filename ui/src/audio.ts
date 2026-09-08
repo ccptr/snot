@@ -93,25 +93,40 @@ export const AudioNote = TiptapNode.create({
       });
       const player = el("audio", {
         class: "audio-player",
-        attrs: { controls: "controls", preload: "metadata", src: attrs.src },
+        attrs: { controls: "controls", preload: "metadata" },
       });
 
-      // The stored URL names a path on whichever machine recorded the clip.
-      // If it no longer resolves, the attachment id still does — ask the
-      // library where the file lives now rather than showing a dead player.
-      let recovered = false;
-      player.addEventListener("error", () => {
-        if (recovered || !attrs.attachmentId) return;
-        recovered = true;
-        void api
-          .attachmentPath(attrs.attachmentId)
-          .then((path) => {
-            player.src = convertFileSrc(path);
-          })
-          .catch(() => {
-            caption.textContent = `${attrs.name || "Voice recording"} — missing from the library`;
-          });
-      });
+      let objectUrl: string | null = null;
+      void (async () => {
+        // The attachment id is asked first, and the stored `src` is only the
+        // fallback: the URL was built from a path on whichever machine made
+        // the recording, so it is the half of the reference that goes stale.
+        let url = attrs.src;
+        if (attrs.attachmentId) {
+          try {
+            url = convertFileSrc(await api.attachmentPath(attrs.attachmentId));
+          } catch {
+            caption.textContent = `${label} — missing from the library`;
+            return;
+          }
+        }
+        try {
+          // Chromium reads media in bounded byte ranges, and Tauri's asset
+          // protocol on Android answers those wrongly — a range from the
+          // middle of a file comes back a byte long or not at all, which
+          // stalls the player with no error to show for it. Fetching the clip
+          // whole and playing it from a blob asks for no ranges at all, and a
+          // voice note is small enough to hold in memory.
+          const response = await fetch(url);
+          if (!response.ok) throw new Error(String(response.status));
+          objectUrl = URL.createObjectURL(await response.blob());
+          player.src = objectUrl;
+        } catch {
+          // Whatever went wrong reading it that way, the player can still be
+          // pointed at the file itself.
+          player.src = url;
+        }
+      })();
 
       const dom = el("div", { class: "audio-note", attrs: { "data-drag-handle": "" } }, player, caption);
 
@@ -121,6 +136,9 @@ export const AudioNote = TiptapNode.create({
         // must not swallow the clicks and drags that work them.
         stopEvent: (event) => player.contains(event.target as Node),
         ignoreMutation: () => true,
+        destroy: () => {
+          if (objectUrl) URL.revokeObjectURL(objectUrl);
+        },
       };
     };
   },
