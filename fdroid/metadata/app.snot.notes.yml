@@ -1,0 +1,24 @@
+Categories:
+  - Writing
+License: GPL-3.0-or-later
+AuthorName: ccptr
+SourceCode: https://github.com/ccptr/snot
+IssueTracker: https://github.com/ccptr/snot/issues
+
+Name: Snot
+Summary: Open source notes with rich text and stylus ink
+Description: |-
+  Snot keeps the parts of a good notes app that matter — folders, rich text,
+  checklists, and real stylus ink on the same page as your writing — and drops
+  the lock-in. Your library is a plain SQLite file and a folder of attachments
+  on your own disk.
+
+  Ink is stored as vectors rather than a bitmap, so a drawing made on a phone
+  reopens on a desktop at the same proportions and stays sharp at any zoom.
+
+  Every note exports to Markdown, and attachments are ordinary files.
+
+# Defence in depth: with this set, fdroid update refuses an APK signed by any
+# other key. Uncomment once the release key exists, using the digest recorded
+# in tools/signer.sha256.
+#AllowedAPKSigningKeys: <sha256 from tools/signer.sha256>

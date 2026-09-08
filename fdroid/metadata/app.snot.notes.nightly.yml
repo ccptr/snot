@@ -1,0 +1,22 @@
+Categories:
+  - Writing
+License: GPL-3.0-or-later
+AuthorName: ccptr
+SourceCode: https://github.com/ccptr/snot
+IssueTracker: https://github.com/ccptr/snot/issues
+
+Name: Snot Nightly
+Summary: Snot built from the latest commit — expect breakage
+Description: |-
+  An automatic build of Snot from the tip of the main branch. It installs
+  alongside the release build rather than replacing it, and carries its own
+  library, so trying it will not touch your notes in the release app.
+
+  These builds are not tested before publication. Data loss is unlikely but
+  not impossible; keep anything you care about in the release build.
+
+  versionCode is the commit count on main, and the version name records the
+  commit the build came from.
+
+# Uncomment once the nightly key exists, using tools/signer-nightly.sha256.
+#AllowedAPKSigningKeys: <sha256 from tools/signer-nightly.sha256>
