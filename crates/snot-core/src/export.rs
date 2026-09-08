@@ -113,12 +113,44 @@ fn block(node: &Value, out: &mut String, depth: usize) {
                 .unwrap_or("image");
             out.push_str(&format!("![{alt}]({src})\n\n"));
         }
+        // Markdown has no player, but it has links, and the recording is an
+        // ordinary file on disk. Say what it is and point at it rather than
+        // letting the note leave with the sound quietly missing.
+        "audio" => {
+            let attrs = node.get("attrs");
+            let src = attrs
+                .and_then(|a| a.get("src"))
+                .and_then(Value::as_str)
+                .unwrap_or("");
+            let name = attrs
+                .and_then(|a| a.get("name"))
+                .and_then(Value::as_str)
+                .filter(|n| !n.trim().is_empty())
+                .unwrap_or("voice recording");
+            let label = match attrs
+                .and_then(|a| a.get("duration"))
+                .and_then(Value::as_f64)
+            {
+                Some(secs) if secs >= 1.0 => format!("{name} ({})", clock(secs)),
+                _ => name.to_string(),
+            };
+            out.push_str(&format!(
+                "[\u{1f3a4} {label}]({src}) \u{2014} *a voice recording, \
+                 which Markdown can link to but not play.*\n\n"
+            ));
+        }
         _ => {
             for child in children(node) {
                 block(child, out, depth);
             }
         }
     }
+}
+
+/// Minutes and seconds, the way a player labels a clip.
+fn clock(seconds: f64) -> String {
+    let total = seconds.round().max(0.0) as u64;
+    format!("{}:{:02}", total / 60, total % 60)
 }
 
 fn list_item_body(item: &Value, out: &mut String, depth: usize) {

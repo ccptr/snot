@@ -411,3 +411,43 @@ fn a_real_first_launch_gets_one_welcome_note_and_nothing_to_tidy_up() {
         .unwrap()
         .is_empty());
 }
+
+/// A note can be nothing but a recording. It still has to be findable, and it
+/// still has to say what it is when it leaves as Markdown.
+#[test]
+fn a_voice_recording_shows_up_in_the_list_in_search_and_in_the_export() {
+    let s = Store::open_in_memory().unwrap();
+    let doc = json!({"type":"doc","content":[
+        {"type":"audio","attrs":{
+            "src":"asset://localhost/recording-1.webm",
+            "name":"recording-1.webm",
+            "attachmentId":"att-1",
+            "duration":72.4
+        }},
+    ]});
+    let note = s.create_note(None, Some(doc.clone())).unwrap();
+
+    assert_eq!(note.summary.title, "\u{1f3a4} recording-1.webm");
+    let found = s.search("recording", &Scope::All).unwrap();
+    assert_eq!(found.len(), 1, "a recording-only note should be searchable");
+    assert_eq!(found[0].id, note.summary.id);
+
+    let md = doc_to_markdown(&doc);
+    assert!(
+        md.contains("(asset://localhost/recording-1.webm)"),
+        "the export must link the recording, not drop it: {md}"
+    );
+    assert!(md.contains("recording-1.webm (1:12)"), "{md}");
+    assert!(md.contains("Markdown can link to but not play"), "{md}");
+}
+
+/// An unnamed recording still says what it is, in both places.
+#[test]
+fn an_unnamed_recording_still_names_itself() {
+    let doc = json!({"type":"doc","content":[
+        {"type":"paragraph","content":[{"type":"text","text":"before"}]},
+        {"type":"audio","attrs":{"src":"asset://localhost/a.webm"}},
+    ]});
+    assert_eq!(doc_to_text(&doc), "before\n\u{1f3a4} voice recording");
+    assert!(doc_to_markdown(&doc).contains("[\u{1f3a4} voice recording](asset://localhost/a.webm)"));
+}

@@ -202,6 +202,19 @@ fn walk(node: &Value, out: &mut String) {
             out.push_str(alt.unwrap_or("\u{1f5bc} image"));
             out.push('\n');
         }
+        // A recording carries no text either, and a note can be nothing but
+        // one; without a marker it would sit blank in the list and be
+        // unfindable by search.
+        Some("audio") => {
+            let name = node
+                .get("attrs")
+                .and_then(|a| a.get("name"))
+                .and_then(Value::as_str)
+                .filter(|n| !n.trim().is_empty());
+            out.push_str("\u{1f3a4} ");
+            out.push_str(name.unwrap_or("voice recording"));
+            out.push('\n');
+        }
         Some("hardBreak") => out.push('\n'),
         _ => {}
     }
@@ -209,7 +222,7 @@ fn walk(node: &Value, out: &mut String) {
     let is_block = node
         .get("type")
         .and_then(Value::as_str)
-        .is_some_and(|t| !matches!(t, "text" | "hardBreak" | "image"));
+        .is_some_and(|t| !matches!(t, "text" | "hardBreak" | "image" | "audio"));
 
     if let Some(children) = node.get("content").and_then(Value::as_array) {
         for child in children {
