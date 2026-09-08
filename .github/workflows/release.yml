@@ -168,6 +168,10 @@ jobs:
           SNOT_NIGHTLY_KEYSTORE_PASS: ${{ secrets.APK_KEYSTORE_PASS }}
           SNOT_KEY_ALIAS: ${{ vars.APK_KEY_ALIAS }}
           SNOT_NIGHTLY_KEY_ALIAS: ${{ vars.APK_KEY_ALIAS }}
+          # Runners ship several build-tools; use the one installed above
+          # rather than whichever sorts highest.
+          SNOT_BUILD_TOOLS: "36.0.0"
+
         run: |
           set -euo pipefail
           tools/release-android.sh --variant "$VARIANT" --no-publish \

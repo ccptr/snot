@@ -132,8 +132,9 @@ fi
 # apksigner and zipalign live in a versioned build-tools directory that is not
 # on PATH in a default SDK install.
 build_tools_bin() {
-    local tool="$1" dir
-    dir="$ANDROID_HOME/build-tools/$(ls -1 "$ANDROID_HOME/build-tools" 2>/dev/null | sort -V | tail -1)"
+    local tool="$1" dir version
+    version="${SNOT_BUILD_TOOLS:-$(ls -1 "$ANDROID_HOME/build-tools" 2>/dev/null | sort -V | tail -1)}"
+    dir="$ANDROID_HOME/build-tools/$version"
     [ -x "$dir/$tool" ] || die "$tool not found under $ANDROID_HOME/build-tools — install the Android build-tools, or set ANDROID_HOME"
     printf '%s\n' "$dir/$tool"
 }
@@ -241,9 +242,15 @@ if [ "$do_sign" -eq 1 ]; then
     # F-Droid pins the signing certificate on first install: an APK signed with
     # the wrong key is not an update, it is an app nobody can upgrade to. Check
     # against the recorded fingerprint before it can reach the repo.
-    digest="$("$apksigner" verify --print-certs "$staged" \
-        | sed -n 's/^Signer #1 certificate SHA-256 digest: //p')"
-    [ -n "$digest" ] || die "could not read the signer certificate back from the signed APK"
+    # Keep the output: when this cannot be parsed, the reason is in here, and
+    # discarding it leaves nothing to debug from a CI log.
+    verify_out="$("$apksigner" verify --print-certs "$staged" 2>&1 || true)"
+    digest="$(printf '%s\n' "$verify_out" \
+        | sed -n 's/.*certificate SHA-256 digest: *//p' | head -1 | tr 'A-Z' 'a-z')"
+    if [ -z "$digest" ]; then
+        printf '%s\n' "$verify_out" | head -20 >&2
+        die "could not read a signer certificate back from the signed APK (apksigner said the above)"
+    fi
 
     if [ -f "$signer_file" ]; then
         expected="$(tr -d '[:space:]' < "$signer_file")"
