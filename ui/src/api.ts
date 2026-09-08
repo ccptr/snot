@@ -1,6 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import type {
-  Folder, Note, NotePatch, NoteSummary, Scope, SortBy, Stats, StoredAttachment, Tag,
+  Folder, ImportSummary, Note, NotePatch, NoteSummary, Scope, SortBy, Stats, StoredAttachment,
+  Tag,
 } from "./types";
 
 /**
@@ -43,6 +44,10 @@ export const api = {
 
   importPdf: (name: string, bytes: Uint8Array, folderId: string | null) =>
     invoke<Note>("import_pdf", { name, bytes: Array.from(bytes), folderId }),
+  importMarkdownDir: (path: string, folderId: string | null) =>
+    invoke<ImportSummary>("import_markdown_dir", { path, folderId }),
+  importSamsungDir: (path: string, folderId: string | null) =>
+    invoke<ImportSummary>("import_samsung_dir", { path, folderId }),
 
   exportMarkdown: (id: string) => invoke<string>("export_markdown", { id }),
   writeTextFile: (path: string, contents: string) =>

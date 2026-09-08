@@ -77,6 +77,22 @@ export interface StoredAttachment {
   path: string;
 }
 
+/** One file an import could not read at all, and why. */
+export interface ImportFailure {
+  path: string;
+  reason: string;
+}
+
+/** What an import did, in the terms the user cares about. */
+export interface ImportSummary {
+  notes: number;
+  folders: number;
+  attachments: number;
+  /** Files kept as attachments because nothing could be read out of them. */
+  unconverted: number;
+  failures: ImportFailure[];
+}
+
 export interface Stats {
   notes: number;
   trashed: number;

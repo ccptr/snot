@@ -1,3 +1,4 @@
+import { convertFileSrc } from "@tauri-apps/api/core";
 import { open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
 import { readFile } from "@tauri-apps/plugin-fs";
 
@@ -5,7 +6,7 @@ import { api } from "./api";
 import { button, clear, debounce, el, formatDate, icon } from "./dom";
 import { createEditor, type NoteEditor } from "./editor";
 import { askText, confirmAction, menu, toast } from "./modal";
-import type { Folder, Note, NoteSummary, Scope, SortBy, Tag } from "./types";
+import type { Folder, ImportSummary, Note, NoteSummary, Scope, SortBy, Tag } from "./types";
 
 type Theme = "system" | "light" | "dark";
 
@@ -24,6 +25,46 @@ const SCOPE_LABELS: Record<string, string> = {
 function fileNameOf(picked: string): string {
   const tail = decodeURIComponent(picked).split(/[/\\]/).pop() ?? "";
   return /\.pdf$/i.test(tail) ? tail : "Imported document.pdf";
+}
+
+/** An import result in one sentence the user can do something about. */
+function summarise(summary: ImportSummary): string {
+  if (summary.notes === 0 && summary.failures.length === 0) {
+    return "Nothing in that folder looked like a note.";
+  }
+  const parts = [plural(summary.notes, "note")];
+  if (summary.folders > 0) parts.push(plural(summary.folders, "folder"));
+  if (summary.attachments > 0) parts.push(plural(summary.attachments, "attachment"));
+  let text = `Imported ${parts.join(", ")}`;
+  if (summary.unconverted > 0) {
+    const they = summary.unconverted === 1 ? "it is" : "they are";
+    text += ` — ${summary.unconverted} could not be read, so ${they} attached whole`;
+  }
+  if (summary.failures.length > 0) {
+    text += `. ${plural(summary.failures.length, "file")} failed: ${summary.failures[0]!.reason}`;
+  }
+  return `${text}.`;
+}
+
+function plural(count: number, noun: string): string {
+  return `${count} ${noun}${count === 1 ? "" : "s"}`;
+}
+
+/**
+ * Rewrites the picture links an import left behind. `snot-core` stores an
+ * attachment's path, because it has no business knowing what a webview is;
+ * only the front end knows which URL this platform serves that path from.
+ */
+function withWebviewImages(doc: unknown): unknown {
+  const node = doc as { type?: string; attrs?: Record<string, unknown>; content?: unknown[] };
+  const src = node?.attrs?.["src"];
+  if (node?.type === "image" && typeof src === "string" && /^(\/|[A-Za-z]:[\\/])/.test(src)) {
+    return { ...node, attrs: { ...node.attrs, src: convertFileSrc(src) } };
+  }
+  if (Array.isArray(node?.content)) {
+    return { ...node, content: node.content.map(withWebviewImages) };
+  }
+  return doc;
 }
 
 function scopeKey(scope: Scope): string {
@@ -107,8 +148,8 @@ export class App {
           onClick: (ev) => this.sortMenu(ev.currentTarget as HTMLElement),
         }),
         button({
-          label: "Import a PDF", icon: "import", class: "btn ghost icon-only", showLabel: false,
-          onClick: () => void this.importPdf(),
+          label: "Import", icon: "import", class: "btn ghost icon-only", showLabel: false,
+          onClick: (ev) => this.importMenu(ev.currentTarget as HTMLElement),
         }),
         button({
           label: "New note", icon: "plus", class: "btn primary icon-only", showLabel: false,
@@ -472,6 +513,45 @@ export class App {
     this.editor?.editor.commands.focus("start");
   }
 
+  /** Everything that brings somebody else's notes in. */
+  private importMenu(anchor: HTMLElement): void {
+    menu(anchor, [
+      { label: "PDF to write on…", onSelect: () => void this.importPdf() },
+      { label: "Markdown folder…", onSelect: () => void this.importDirectory("markdown") },
+      { label: "Samsung Notes folder…", onSelect: () => void this.importDirectory("samsung") },
+    ]);
+  }
+
+  /**
+   * Brings in a whole folder of somebody else's notes. Picking a directory is
+   * a desktop affordance — a phone's picker hands back a document URI with no
+   * directory behind it — so on a phone this says so rather than half-working.
+   */
+  private async importDirectory(kind: "markdown" | "samsung"): Promise<void> {
+    this.saveSoon.flush();
+    let picked: string | string[] | null = null;
+    try {
+      picked = await openDialog({ directory: true, multiple: false });
+    } catch {
+      toast("This device cannot pick a folder — import one file at a time.", "error");
+      return;
+    }
+    if (typeof picked !== "string") return;
+    const folderId = this.scope.kind === "folder" ? this.scope.id : null;
+    try {
+      const summary = kind === "markdown"
+        ? await api.importMarkdownDir(picked, folderId)
+        : await api.importSamsungDir(picked, folderId);
+      if (this.scope.kind === "trash") this.scope = { kind: "all" };
+      await this.reloadSidebar();
+      await this.reloadList();
+      if (this.notes[0]) await this.open(this.notes[0].id);
+      toast(summarise(summary), summary.failures.length > 0 ? "error" : "info");
+    } catch (err) {
+      toast(`Could not import that folder: ${err}`, "error");
+    }
+  }
+
   /** Brings a PDF in as a note: the document becomes the page to write on. */
   private async importPdf(): Promise<void> {
     this.saveSoon.flush();
@@ -520,7 +600,10 @@ export class App {
       });
       this.toolbarSlot.appendChild(this.editor.toolbar);
     }
-    this.editor.editor.commands.setContent(this.current.doc as never, { emitUpdate: false });
+    this.editor.editor.commands.setContent(
+      withWebviewImages(this.current.doc) as never,
+      { emitUpdate: false },
+    );
     this.editor.setInk(this.current.ink);
     await this.editor.setBackground(this.current.background);
     this.editor.editor.setEditable(!this.current.trashedAt);
