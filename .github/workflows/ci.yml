@@ -91,6 +91,13 @@ jobs:
           cache-dependency-path: ui/package-lock.json
       - run: npm --prefix ui ci
       - run: cargo install tauri-cli --version "^2" --locked
+      # gen/ is gitignored, so the Android project does not exist in a fresh
+      # checkout and the build has nothing to assemble.
+      - name: Generate the Android project
+        env:
+          NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/27.2.12479018
+        run: cargo tauri android init --ci
+
       - name: Build the Android app
         env:
           NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/27.2.12479018
