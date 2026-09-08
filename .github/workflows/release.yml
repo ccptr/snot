@@ -1,20 +1,19 @@
-# Publishes Snot to the self-hosted F-Droid repo.
+# Builds and signs Snot's Android variants, then hands the signed APK to the
+# F-Droid repository as a GitHub Release asset.
 #
 #   a tag v*        -> the release variant, gated on the `release` environment
 #   a push to main  -> the nightly variant, published without review
 #
-# The two jobs are split on purpose. `build` runs every build script in the
-# dependency tree — each crate's build.rs, every npm lifecycle script — and is
-# given no secrets at all. `publish` holds the keys and runs almost nothing:
-# it downloads an artifact, signs it, and rsyncs the result.
+# This workflow does not touch the F-Droid repository itself. That repo hosts
+# several apps, so its index key, its config and every app's metadata live in
+# ccptr/fdroid, which collects the release assets published here. Keeping the
+# index key out of each app repo means a compromise of one app cannot forge
+# the index for the others, and one workflow owning the deploy means two apps
+# publishing at once cannot race each other's index.
 #
-# What that boundary does and does not buy: the release APK key sits behind a
-# required review, so nobody can ship a release update without a human. The
-# repo index key and the nightly APK key are used unattended, so a compromise
-# there means an attacker can publish nightly builds and add new packages to
-# the index — but not push an update to anyone's installed release build,
-# because F-Droid pins the release signer. If that is not a boundary you want,
-# give nightly its own F-Droid repository with its own index key.
+# The handover format is the contract: a signed APK named
+# <applicationId>_<versionCode>.apk on a GitHub Release. Any app, in any
+# language, can satisfy it.
 
 name: release
 
@@ -25,7 +24,7 @@ on:
   workflow_dispatch:
     inputs:
       variant:
-        description: Which variant to build and publish
+        description: Which variant to build and sign
         type: choice
         options: [nightly, release]
         default: nightly
@@ -33,9 +32,8 @@ on:
 permissions:
   contents: read
 
-# Two runs deploying to the same web root would race each other.
 concurrency:
-  group: fdroid-publish
+  group: release-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
@@ -64,7 +62,7 @@ jobs:
     needs: variant
     runs-on: ubuntu-latest
     # No secrets are referenced anywhere in this job. Adding one here would
-    # hand it to every build script in the dependency tree.
+    # hand it to every build.rs and npm lifecycle script in the tree.
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -112,8 +110,8 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
-  publish:
-    name: sign and publish ${{ needs.variant.outputs.name }}
+  sign:
+    name: sign ${{ needs.variant.outputs.name }}
     needs: [variant, build]
     runs-on: ubuntu-latest
     # `release` should carry required reviewers and be restricted to tag refs;
@@ -121,7 +119,7 @@ jobs:
     # APK_KEYSTORE_PASS under those names, with different values.
     environment: ${{ needs.variant.outputs.name }}
     permissions:
-      contents: read
+      contents: write   # to attach the APK to a Release
       actions: read
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
@@ -143,80 +141,18 @@ jobs:
       - name: Install apksigner and zipalign
         run: sdkmanager --install "build-tools;36.0.0"
 
-      - name: Install fdroidserver
-        run: |
-          set -euo pipefail
-          python3 -m venv "$RUNNER_TEMP/fdroid-venv"
-          "$RUNNER_TEMP/fdroid-venv/bin/pip" install --quiet --upgrade pip
-          "$RUNNER_TEMP/fdroid-venv/bin/pip" install --quiet fdroidserver
-          echo "$RUNNER_TEMP/fdroid-venv/bin" >> "$GITHUB_PATH"
-
-      - name: Unpack the signing keys
+      - name: Unpack the signing key
         env:
           APK_KEYSTORE_B64: ${{ secrets.APK_KEYSTORE_B64 }}
-          FDROID_KEYSTORE_B64: ${{ secrets.FDROID_KEYSTORE_B64 }}
         run: |
           set -euo pipefail
           umask 077
           printf '%s' "$APK_KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/apk.p12"
-          printf '%s' "$FDROID_KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/index.p12"
 
-      - name: Authorise the deploy
-        env:
-          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
-          DEPLOY_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
-        run: |
-          set -euo pipefail
-          umask 077
-          mkdir -p ~/.ssh
-          printf '%s\n' "$DEPLOY_SSH_KEY" > ~/.ssh/id_ed25519
-          # Pin the host key rather than accepting whatever answers.
-          printf '%s\n' "$DEPLOY_KNOWN_HOSTS" > ~/.ssh/known_hosts
-
-      - name: Assemble the F-Droid working tree
-        env:
-          SERVERWEBROOT: ${{ vars.FDROID_SERVERWEBROOT }}
-          REPO_URL: ${{ vars.FDROID_REPO_URL }}
-          ARCHIVE_URL: ${{ vars.FDROID_ARCHIVE_URL }}
-          REPO_NAME: ${{ vars.FDROID_REPO_NAME }}
-          KEY_ALIAS: ${{ vars.FDROID_KEY_ALIAS }}
-          FDROID_KEYSTORE_PASS: ${{ secrets.FDROID_KEYSTORE_PASS }}
-        run: |
-          set -euo pipefail
-          work="$RUNNER_TEMP/fdroid"
-          mkdir -p "$work/repo" "$work/archive" "$work/metadata"
-          cp fdroid/metadata/*.yml "$work/metadata/"
-
-          # fdroid update needs the versions already published to decide what
-          # rolls into the archive and to write a complete index.
-          rsync -az "${SERVERWEBROOT}repo/" "$work/repo/" || echo "no repo/ on the server yet"
-          rsync -az "${SERVERWEBROOT}archive/" "$work/archive/" || echo "no archive/ on the server yet"
-
-          # Built with a real serialiser: a password is arbitrary bytes and has
-          # no business being pasted into a here-doc.
-          python3 - "$work/config.yml" <<'PY'
-          import json, os, sys
-          cfg = {
-              "repo_url": os.environ["REPO_URL"],
-              "repo_name": os.environ["REPO_NAME"],
-              "archive_url": os.environ["ARCHIVE_URL"],
-              "archive_older": 3,
-              "serverwebroot": os.environ["SERVERWEBROOT"],
-              "keystore": os.path.join(os.environ["RUNNER_TEMP"], "index.p12"),
-              "repo_keyalias": os.environ["KEY_ALIAS"],
-              "keystorepass": os.environ["FDROID_KEYSTORE_PASS"],
-              "keypass": os.environ["FDROID_KEYSTORE_PASS"],
-          }
-          with open(sys.argv[1], "w") as f:
-              for k, v in cfg.items():
-                  f.write(f"{k}: {json.dumps(v)}\n")
-          PY
-          chmod 600 "$work/config.yml"
-
-      - name: Sign, publish and deploy
+      - name: Sign
         env:
           VARIANT: ${{ needs.variant.outputs.name }}
-          SNOT_FDROID_DIR: ${{ runner.temp }}/fdroid
+          SNOT_DIST_DIR: ${{ runner.temp }}/dist
           # The script reads the pair matching the variant; the environment
           # decides which key the names actually resolve to.
           SNOT_KEYSTORE: ${{ runner.temp }}/apk.p12
@@ -227,9 +163,48 @@ jobs:
           SNOT_NIGHTLY_KEY_ALIAS: ${{ vars.APK_KEY_ALIAS }}
         run: |
           set -euo pipefail
-          tools/release-android.sh --variant "$VARIANT" \
+          tools/release-android.sh --variant "$VARIANT" --no-publish \
             --apk "$RUNNER_TEMP/incoming/app-universal-release-unsigned.apk"
 
-      - name: Destroy the keys
+      - name: Destroy the key
         if: always()
-        run: shred -u "$RUNNER_TEMP/apk.p12" "$RUNNER_TEMP/index.p12" ~/.ssh/id_ed25519 "$RUNNER_TEMP/fdroid/config.yml" 2>/dev/null || true
+        run: shred -u "$RUNNER_TEMP/apk.p12" 2>/dev/null || true
+
+      # The release variant attaches to the tag that triggered it. The nightly
+      # is a single rolling prerelease, replaced each time, so the F-Droid repo
+      # always has one obvious place to look.
+      - name: Attach the APK to a Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VARIANT: ${{ needs.variant.outputs.name }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          apk=$(ls "$RUNNER_TEMP"/dist/*.apk)
+          echo "attaching $(basename "$apk")" >> "$GITHUB_STEP_SUMMARY"
+          if [ "$VARIANT" = release ]; then
+            gh release view "$TAG" >/dev/null 2>&1 \
+              || gh release create "$TAG" --title "$TAG" --generate-notes
+            gh release upload "$TAG" "$apk" --clobber
+          else
+            gh release delete nightly --yes --cleanup-tag 2>/dev/null || true
+            gh release create nightly --prerelease --target "$GITHUB_SHA" \
+              --title "Nightly" \
+              --notes "Automatic build of ${GITHUB_SHA:0:7}. Installs alongside the release build." \
+              "$apk"
+          fi
+
+      # Optional: nudge the F-Droid repo to pick this up immediately. Without
+      # the token the scheduled run in that repo collects it later instead.
+      - name: Ask the F-Droid repo to publish
+        env:
+          DISPATCH_TOKEN: ${{ secrets.FDROID_DISPATCH_TOKEN }}
+          FDROID_REPO: ${{ vars.FDROID_REPO_SLUG }}
+        run: |
+          set -euo pipefail
+          if [ -z "${DISPATCH_TOKEN:-}" ] || [ -z "${FDROID_REPO:-}" ]; then
+            echo "no dispatch token; the scheduled run will collect this build"
+            exit 0
+          fi
+          GH_TOKEN="$DISPATCH_TOKEN" gh api --method POST \
+            "repos/$FDROID_REPO/dispatches" -f event_type=publish

@@ -32,27 +32,29 @@ tools/release-android.sh --variant nightly
 
 ## In CI
 
-`.github/workflows/release.yml` runs the same script. A `v*` tag publishes the
-release variant; a push to `main` publishes a nightly.
+`.github/workflows/release.yml` runs the same script. A `v*` tag builds and
+signs the release variant; a push to `main` does the nightly. The signed APK is
+attached to a GitHub Release — and that is where this repo's involvement ends.
 
-It is split into two jobs on purpose. `build` runs every build script in the
-dependency tree — each crate's `build.rs`, every npm lifecycle script — and is
-given **no secrets at all**. `publish` holds the keys and runs almost nothing:
-download an artifact, sign it, rsync the result.
+Publishing is not done here. The F-Droid repository carries several apps, so its
+config, every app's metadata, the index key and the deploy live in **ccptr/fdroid**,
+which collects the release assets published here. That keeps the index key out of
+each app repo, so a compromise of one app cannot forge the index for the others,
+and it puts every deploy in one workflow, so two apps publishing at once cannot
+race each other's index.
 
-### What that boundary is worth
+The handover format is the whole contract: a signed APK named
+`<applicationId>_<versionCode>.apk` on a GitHub Release.
 
-The release APK key sits behind a required review, so nobody ships a release
-update without a human approving it.
+### The build/sign split
 
-The repo index key and the nightly APK key are used unattended. A compromise
-there lets an attacker publish nightly builds and add new packages to the index
-— but **not** push an update to anyone's installed release build, because
-F-Droid pins the release signer and the attacker does not have that key.
+`build` runs every build script in the dependency tree — each crate's `build.rs`,
+every npm lifecycle script — and is given **no secrets at all**. `sign` holds the
+key and runs almost nothing: download an artifact, sign it, attach it.
 
-If that boundary is too loose, give nightly its own F-Droid repository with its
-own index key, so the main repo's index is only ever signed behind the gate.
-Nothing else in the setup changes.
+The release APK key sits behind a required review. The nightly key is used
+unattended, which buys an attacker nightly builds if they get it, but not an
+update to anyone's installed release build — F-Droid pins the release signer.
 
 ### Environments
 
@@ -61,7 +63,7 @@ restricted to tag refs** — referencing an environment that does not exist
 silently creates one with no protection at all, which would leave the release
 key ungated.
 
-Each environment holds these under the same names, with different values:
+Each holds these under the same names, with different values:
 
 | name | kind | |
 |---|---|---|
@@ -69,83 +71,39 @@ Each environment holds these under the same names, with different values:
 | `APK_KEYSTORE_PASS` | secret | its password |
 | `APK_KEY_ALIAS` | variable | `snot` / `snot-nightly` |
 
-Repository-wide:
+Optional, to make the F-Droid repo publish immediately rather than waiting for
+its next scheduled run:
 
 | name | kind | |
 |---|---|---|
-| `FDROID_KEYSTORE_B64` | secret | the repo *index* key, base64 |
-| `FDROID_KEYSTORE_PASS` | secret | its password |
-| `DEPLOY_SSH_KEY` | secret | private key for `fdroid@<host>` |
-| `DEPLOY_KNOWN_HOSTS` | secret | `ssh-keyscan <host>` output, so the host key is pinned |
-| `FDROID_KEY_ALIAS` | variable | index key alias |
-| `FDROID_REPO_URL` | variable | `https://<host>/fdroid/repo` |
-| `FDROID_ARCHIVE_URL` | variable | `https://<host>/fdroid/archive` |
-| `FDROID_REPO_NAME` | variable | e.g. `Snot` |
-| `FDROID_SERVERWEBROOT` | variable | `fdroid@<host>:/srv/fdroid/fdroid/` |
-
-`fdroid/metadata/*.yml` is tracked here and copied into the working tree each
-run; the existing `repo/` and `archive/` are rsynced down from the server first,
-because `fdroid update` needs the published versions to write a complete index
-and to decide what rolls into the archive.
+| `FDROID_DISPATCH_TOKEN` | secret | a token that can dispatch workflows in the fdroid repo |
+| `FDROID_REPO_SLUG` | variable | `ccptr/fdroid` |
 
 ## The keys
 
-Four keystores exist, and none of them can be rotated:
-
 - **release APK key** — pinned by every install of `app.snot.notes`
 - **nightly APK key** — pinned by every install of `app.snot.notes.nightly`
-- **repo index key** — pinned by every client that added the repo
-- **deploy SSH key** — the one that *can* be rotated freely
 
-Keep offline backups of the first three. `tools/signer.sha256` and
-`tools/signer-nightly.sha256` record the expected APK certificates; the script
-refuses to publish anything signed by a different key, which matters more in CI
-than locally because nobody is watching. Create each file after the first real
-signature, using the digest the script prints.
+Neither can be rotated; keep offline backups. The index and deploy keys are not
+this repo's concern any more — they live in ccptr/fdroid.
 
-## One-time: the server
+`tools/signer.sha256` and `tools/signer-nightly.sha256` record the expected
+certificates, and the script refuses to publish anything signed by a different
+key. The same digests go in the fdroid repo's `apps.yml`, where they are checked
+again on the way in and enforced by fdroid itself as `AllowedAPKSigningKeys`.
 
-Any static web root. On an Arch-family host:
+## Publishing by hand
 
-```sh
-sudo useradd -r -m -d /srv/fdroid -s /bin/bash fdroid
-sudo install -d -o fdroid -g fdroid /srv/fdroid/fdroid
-sudo pacman -S nginx-mainline certbot certbot-nginx rsync
-```
-
-nginx wants `root /srv/fdroid;` and `autoindex off;`, then `certbot --nginx`.
-TLS is not what makes the repo trustworthy — signatures do that — but it keeps
-the client's cleartext-traffic policy happy.
-
-Restrict the deploy key in `/srv/fdroid/.ssh/authorized_keys`:
-
-```
-command="rrsync /srv/fdroid/fdroid",restrict ssh-ed25519 AAAA... deploy
-```
-
-A leaked deploy key then gets rsync into that one directory and no shell. Note
-this is read **and** write, not `rrsync -wo`: the publish job pulls the existing
-repo down before regenerating the index.
-
-## One-time: the F-Droid repository
-
-Only needed for the local flow; CI assembles its working tree from scratch each
-run.
+The script can still publish straight into a local F-Droid working tree, which
+is what you want if GitHub is down or you are testing the repo itself:
 
 ```sh
 pipx install fdroidserver
-mkdir -p ~/snot-fdroid && cd ~/snot-fdroid
-fdroid init --distinguished-name "CN=<host>, OU=F-Droid"
-ln -s ~/p/snot/fdroid/metadata metadata     # keep one source of metadata
+SNOT_FDROID_DIR=~/snot-fdroid tools/release-android.sh --no-deploy
 ```
 
-Set `repo_url`, `repo_name`, `archive_older: 3`, `archive_url` and
-`serverwebroot` in `config.yml`, then point `SNOT_FDROID_DIR` at the directory.
-`fdroid init` prints the fingerprint users need:
-
-```
-https://<host>/fdroid/repo?fingerprint=<fingerprint>
-```
+That needs a working tree made by `fdroid init`; see the ccptr/fdroid README for
+how the repo is laid out and how the server is set up.
 
 ## Why a universal APK
 
