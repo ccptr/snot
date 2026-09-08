@@ -172,10 +172,10 @@ export type RecorderSupport = { ok: true } | { ok: false; why: string };
  * Whether this webview can record at all, asked before a button is drawn
  * rather than discovered when one is pressed.
  *
- * Not every webview Snot ships in has a recorder: WebKitGTK, which is what
- * Linux desktop runs, ships `MediaRecorder` only partially and can refuse the
- * microphone outright. A missing feature is a disabled button that explains
- * itself, not an exception out of a click handler.
+ * Not every webview Snot ships in has a recorder, and the ones that do are not
+ * all willing to open a microphone — WebKitGTK builds vary in both. What is
+ * missing outright is a disabled button that explains itself; what is present
+ * but unwilling is caught later, by `openMicrophone`.
  */
 export function recorderSupport(): RecorderSupport {
   if (typeof MediaRecorder === "undefined") {
@@ -197,6 +197,45 @@ export interface Recording {
   seconds: number;
 }
 
+/**
+ * Long enough for somebody to read a system permission dialog and decide, and
+ * short enough that a webview which will never answer at all is found out.
+ */
+const OPEN_TIMEOUT_MS = 20_000;
+
+/**
+ * Asks for the microphone, and gives up if the answer never comes.
+ *
+ * A webview that has `getUserMedia` has not promised to use it: where the
+ * platform side does not answer a capture request — some WebKitGTK builds do
+ * not — the promise neither resolves nor rejects, and a button that waits on
+ * it waits forever. Better to stop waiting and say so.
+ */
+async function openMicrophone(): Promise<MediaStream> {
+  const pending = navigator.mediaDevices.getUserMedia({ audio: true });
+  let gaveUp = false;
+  return await Promise.race([
+    pending,
+    new Promise<never>((_, reject) => {
+      setTimeout(() => {
+        gaveUp = true;
+        reject(new DOMException("the webview never answered", "TimeoutError"));
+      }, OPEN_TIMEOUT_MS);
+    }),
+  ]).catch((err: unknown) => {
+    // A microphone handed over after we stopped waiting is still ours to let
+    // go of; leaving it open would keep the recording indicator lit.
+    if (gaveUp) {
+      void pending
+        .then((late) => {
+          for (const track of late.getTracks()) track.stop();
+        })
+        .catch(() => {});
+    }
+    throw err;
+  });
+}
+
 /** Holds the microphone for as long as a recording is running, and no longer. */
 export class VoiceRecorder {
   private recorder: MediaRecorder | null = null;
@@ -212,7 +251,7 @@ export class VoiceRecorder {
   /** Opens the microphone and starts recording; `onTick` gets elapsed seconds. */
   async start(onTick: (seconds: number) => void): Promise<void> {
     if (this.recorder) return;
-    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    const stream = await openMicrophone();
     const container = preferredContainer();
     const recorder = new MediaRecorder(stream, container ? { mimeType: container } : undefined);
     this.stream = stream;
@@ -275,6 +314,9 @@ function explain(err: unknown): string {
   }
   if (name === "NotReadableError") {
     return "The microphone is busy — another app is holding it.";
+  }
+  if (name === "TimeoutError") {
+    return "This platform's webview never answered the request for the microphone, so Snot cannot record here.";
   }
   return `Could not start recording: ${err}`;
 }
@@ -348,6 +390,11 @@ export function recordButton(editor: Editor, noteId: () => string | null): HTMLB
       }
       return;
     }
+    // Asking for the microphone can take as long as it takes somebody to
+    // answer a system dialog, so the button says it is waiting rather than
+    // looking like a press that did nothing.
+    b.disabled = true;
+    b.title = "Waiting for the microphone\u2026";
     try {
       await recorder.start((seconds) => {
         elapsed.textContent = clock(seconds);
@@ -357,6 +404,8 @@ export function recordButton(editor: Editor, noteId: () => string | null): HTMLB
       recorder.cancel();
       setRunning(false);
       toast(explain(err), "error");
+    } finally {
+      b.disabled = false;
     }
   };
 
