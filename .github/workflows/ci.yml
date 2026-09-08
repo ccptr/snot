@@ -76,6 +76,11 @@ jobs:
   android:
     name: android
     runs-on: ubuntu-latest
+    # On main, release.yml already builds Android, and builds it properly:
+    # release profile, all four ABIs, minification on. This debug aarch64 build
+    # catches strictly less, so it only earns its ten minutes on pull requests,
+    # where release.yml does not run at all.
+    if: github.event_name == 'pull_request'
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-java@v4
