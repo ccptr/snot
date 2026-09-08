@@ -221,5 +221,10 @@ jobs:
             echo "no dispatch token; the scheduled run will collect this build"
             exit 0
           fi
-          GH_TOKEN="$DISPATCH_TOKEN" gh api --method POST \
-            "repos/$FDROID_REPO/dispatches" -f event_type=publish
+          # Publishing is meant to be immediate. Falling back to the six-hourly
+          # schedule is a degraded state, not an acceptable one, so say so.
+          if ! GH_TOKEN="$DISPATCH_TOKEN" gh api --method POST \
+               "repos/$FDROID_REPO/dispatches" -f event_type=publish; then
+            echo "::error::dispatch to $FDROID_REPO failed. FDROID_DISPATCH_TOKEN needs Contents: read and write on that repo -- Actions permission is not what this endpoint checks."
+            exit 1
+          fi
