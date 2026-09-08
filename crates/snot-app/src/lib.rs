@@ -68,6 +68,8 @@ pub fn run() {
             commands::put_attachment,
             commands::attachment_path,
             commands::import_pdf,
+            commands::import_markdown_dir,
+            commands::import_samsung_dir,
             commands::export_markdown,
             commands::write_text_file,
         ])

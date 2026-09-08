@@ -2,7 +2,9 @@ use std::path::PathBuf;
 
 use serde::Serialize;
 use serde_json::Value;
-use snot_core::{Attachment, Folder, Note, NotePatch, NoteSummary, Scope, SortBy, Tag};
+use snot_core::{
+    Attachment, Folder, ImportSummary, Note, NotePatch, NoteSummary, Scope, SortBy, Tag,
+};
 use tauri::State;
 
 use crate::AppState;
@@ -249,6 +251,54 @@ pub fn import_pdf(
             },
         )?)
     })
+}
+
+/// Imports a directory of Markdown files as notes and folders.
+///
+/// Unlike `import_pdf`, this takes a path rather than bytes: a directory is
+/// a tree, not a file, and there is nothing for the webview to hand over. It
+/// is therefore a desktop affordance — a mobile picker returns a `content://`
+/// URI that names no directory anyone can walk — and it says so plainly
+/// instead of half-working.
+#[tauri::command]
+pub fn import_markdown_dir(
+    state: State<'_, AppState>,
+    path: String,
+    folder_id: Option<String>,
+) -> Res<ImportSummary> {
+    let path = readable_dir(&path)?;
+    with_store!(state, |s| Ok(snot_core::import_markdown_dir(
+        s,
+        &path,
+        folder_id.as_deref()
+    )?))
+}
+
+/// Imports a Samsung Notes export directory: PDFs become pages to annotate,
+/// `.sdocx` and `.snb` containers give up what text and pictures they can,
+/// and anything unreadable still arrives as a note carrying the original.
+#[tauri::command]
+pub fn import_samsung_dir(
+    state: State<'_, AppState>,
+    path: String,
+    folder_id: Option<String>,
+) -> Res<ImportSummary> {
+    let path = readable_dir(&path)?;
+    with_store!(state, |s| Ok(snot_core::import_samsung_dir(
+        s,
+        &path,
+        folder_id.as_deref()
+    )?))
+}
+
+fn readable_dir(path: &str) -> Res<PathBuf> {
+    let dir = PathBuf::from(path);
+    if !dir.is_dir() {
+        return Err(CommandError(format!(
+            "{path} is not a folder this device can read"
+        )));
+    }
+    Ok(dir)
 }
 
 // ----------------------------------------------------------------- export
