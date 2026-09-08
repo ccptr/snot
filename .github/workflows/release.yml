@@ -221,10 +221,16 @@ jobs:
             echo "no dispatch token; the scheduled run will collect this build"
             exit 0
           fi
+          # Deliberately the workflow-dispatch endpoint, not repository-dispatch:
+          # the former needs only Actions: write on the target, the latter needs
+          # Contents: write, which would also let this token push commits to the
+          # repository that holds the index and deploy keys.
+          #
           # Publishing is meant to be immediate. Falling back to the six-hourly
           # schedule is a degraded state, not an acceptable one, so say so.
           if ! GH_TOKEN="$DISPATCH_TOKEN" gh api --method POST \
-               "repos/$FDROID_REPO/dispatches" -f event_type=publish; then
-            echo "::error::dispatch to $FDROID_REPO failed. FDROID_DISPATCH_TOKEN needs Contents: read and write on that repo -- Actions permission is not what this endpoint checks."
+               "repos/$FDROID_REPO/actions/workflows/publish.yml/dispatches" \
+               -f ref=main; then
+            echo "::error::dispatch to $FDROID_REPO failed. FDROID_DISPATCH_TOKEN needs Actions: read and write on that repo."
             exit 1
           fi
