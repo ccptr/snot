@@ -21,6 +21,7 @@ not built yet. See [Roadmap](#roadmap).
 | **Organise** | Nested folders, tags, favourites, pinning, drag a note onto a folder to file it |
 | **Find** | Full-text search over every title and body, prefix-matching as you type, with the matched phrase highlighted in the result |
 | **Safety** | Deletes go to a trash you can restore from; nothing is destroyed until you empty it |
+| **Get in** | Import a folder of Markdown — front matter, tags, dates, nested folders and linked pictures all come across — or a Samsung Notes export. Nothing is ever dropped: a file that cannot be read still arrives as a note carrying the original |
 | **Get out** | Every note exports to Markdown. Attachments are ordinary files on disk |
 | **Fits the screen** | Three panes on a desktop, one pane with a drawer on a phone, light and dark following the system |
 
@@ -28,6 +29,21 @@ Ink is stored as vectors, not a bitmap: a drawing made on a phone reopens on a
 desktop at the same proportions and stays sharp at any zoom. The default pen is
 stored as a token rather than a colour, so a note written in dark mode is not
 invisible when it is reopened in light mode.
+
+The Samsung Notes import is deliberately honest about being partial. A folder
+of PDF exports — the format every version of Samsung Notes can produce — comes
+across whole, one annotatable page per file. A `.sdocx` is not the XML the
+file-extension sites claim: it is a ZIP of little-endian binary whose records
+are laid out by property bitmasks and has no published specification, so Snot
+takes the pictures and PDFs it carries and sweeps its note body for typed
+text. Handwriting, shapes and layout do not survive that, and the sweep can
+turn up the odd stray internal string. The older `.snb` is real XML and reads
+back cleanly. Anything that yields nothing at all still becomes a note with the
+original file attached, and the import says how many that was, so a Samsung
+library can be brought over and picked through rather than left behind.
+
+Both folder imports need a folder picker, which is a desktop affordance; on a
+phone they say so rather than half-working, and single files still import.
 
 ## Platforms
 
@@ -105,7 +121,7 @@ Android additionally needs the Android SDK, the NDK, and
 - [ ] Selecting, moving and reflowing ink
 - [ ] Voice recordings attached to a note
 - [ ] Note lock (the `locked` flag exists; the encryption does not)
-- [ ] Import from a Samsung Notes export, and from Markdown directories
+- [x] Import from a Samsung Notes export, and from Markdown directories
 - [ ] Handwriting search
 
 ## Licence
