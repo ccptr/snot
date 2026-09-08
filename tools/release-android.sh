@@ -96,6 +96,20 @@ if [ "$do_build" -eq 1 ]; then
     command -v cargo >/dev/null || die "cargo not found"
     cargo tauri --version >/dev/null 2>&1 || die "tauri-cli not found — cargo install tauri-cli --version '^2' --locked"
     [ -d "$NDK_HOME" ] || die "NDK_HOME is not a directory (${NDK_HOME:-unset}) — sdkmanager --install 'ndk;27.2.12479018'"
+
+    # Gradle cannot configure this project under the newest JDKs, and a rolling
+    # distro makes one of those the default; CI pins 21 for the same reason.
+    # Respect an explicit JAVA_HOME, otherwise find a version Gradle supports.
+    if [ -z "${JAVA_HOME:-}" ]; then
+        for v in 21 17; do
+            if [ -d "/usr/lib/jvm/java-$v-openjdk" ]; then
+                export JAVA_HOME="/usr/lib/jvm/java-$v-openjdk"
+                note "using JDK $v at $JAVA_HOME"
+                break
+            fi
+        done
+        [ -n "${JAVA_HOME:-}" ] || note "warning: no JDK 21 or 17 found; Gradle will use the default and may fail to configure"
+    fi
     [ -d "$REPO_ROOT/ui/node_modules" ] || npm --prefix "$REPO_ROOT/ui" ci
 
     # A universal APK, deliberately not --split-per-abi: Tauri's generated
