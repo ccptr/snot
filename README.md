@@ -20,6 +20,7 @@ not built yet. See [Roadmap](#roadmap).
 | **PDFs** | Import a PDF as a note and write on it. Pages render lazily, so a long document opens at once and costs only what you look at |
 | **Organise** | Nested folders, tags, favourites, pinning, drag a note onto a folder to file it |
 | **Find** | Full-text search over every title and body, prefix-matching as you type, with the matched phrase highlighted in the result |
+| **Voice** | Record straight into a note. The clip is stored as an attachment and plays back in the page; a note that is nothing but a recording still gets a title and turns up in search |
 | **Safety** | Deletes go to a trash you can restore from; nothing is destroyed until you empty it |
 | **Get in** | Import a folder of Markdown — front matter, tags, dates, nested folders and linked pictures all come across — or a Samsung Notes export. Nothing is ever dropped: a file that cannot be read still arrives as a note carrying the original |
 | **Get out** | Every note exports to Markdown. Attachments are ordinary files on disk |
@@ -44,6 +45,12 @@ library can be brought over and picked through rather than left behind.
 
 Both folder imports need a folder picker, which is a desktop affordance; on a
 phone they say so rather than half-working, and single files still import.
+
+Recording depends on the webview each platform provides. Android asks for the
+microphone the first time and plays the clip back in the page. Where a webview
+has no recorder, or will not answer a request for the microphone — WebKitGTK on
+the Linux desktop is the one to watch — the toolbar button is disabled or says
+so plainly rather than failing quietly.
 
 ## Platforms
 
@@ -119,7 +126,7 @@ Android additionally needs the Android SDK, the NDK, and
 
 - [ ] Sync — end-to-end encrypted, over any file-sync service or a self-hosted server
 - [ ] Selecting, moving and reflowing ink
-- [ ] Voice recordings attached to a note
+- [x] Voice recordings attached to a note
 - [ ] Note lock (the `locked` flag exists; the encryption does not)
 - [x] Import from a Samsung Notes export, and from Markdown directories
 - [ ] Handwriting search
