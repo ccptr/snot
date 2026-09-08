@@ -77,6 +77,8 @@ const PATHS: Record<string, string> = {
   code: "M9 8l-5 4 5 4M15 8l5 4-5 4",
   rule: "M4 12h16",
   image: "M4 5h16v14H4zM4 16l4.5-4.5 4 4L16 12l4 4M9 9.5h.01",
+  mic: "M12 3a3 3 0 0 1 3 3v5a3 3 0 0 1-6 0V6a3 3 0 0 1 3-3zM5 11a7 7 0 0 0 14 0M12 18v3M8.5 21h7",
+  stop: "M7.5 7.5h9v9h-9z",
   pen: "M4 20l1-4L16 5l3 3L8 19zM14.5 6.5l3 3",
   eraser: "M8 20h11M6.5 17.5l-3-3a2 2 0 0 1 0-2.8l8-8a2 2 0 0 1 2.8 0l4.2 4.2a2 2 0 0 1 0 2.8L14 17.5zM9 9l6 6",
   alignLeft: "M4 6h16M4 12h10M4 18h14",

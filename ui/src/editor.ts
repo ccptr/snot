@@ -9,6 +9,7 @@ import TextAlign from "@tiptap/extension-text-align";
 import { convertFileSrc } from "@tauri-apps/api/core";
 
 import { api } from "./api";
+import { AudioNote, recordButton } from "./audio";
 import { button, el, icon } from "./dom";
 import {
   DEFAULT_INK, INK_COLORS, INK_SIZES, InkLayer, MARKER_COLORS, type ToolState,
@@ -73,6 +74,7 @@ export function createEditor(
       TaskItem.configure({ nested: true }),
       TextAlign.configure({ types: ["heading", "paragraph"] }),
       Image.configure({ inline: false, allowBase64: false }),
+      AudioNote,
       Placeholder.configure({ placeholder: "Start writing, or pick up the pen to draw…" }),
     ],
     editorProps: {
@@ -305,6 +307,8 @@ function buildToolbar(
   });
   imageBtn.addEventListener("mousedown", (e) => e.preventDefault());
   bar.appendChild(imageBtn);
+
+  bar.appendChild(recordButton(editor, noteId));
 
   const penBtn = button({
     label: "Draw on the page",

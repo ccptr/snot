@@ -411,6 +411,20 @@ button { font: inherit; color: inherit; }
 .tool.active { background: var(--accent-soft); color: var(--accent); }
 .tool-text { font-size: 12px; font-weight: 680; }
 
+/* Recording has to be visible from across the room: the button turns red,
+   widens and counts, so nobody leaves a microphone open by accident. */
+.tool.recording {
+  width: auto;
+  gap: 6px;
+  grid-auto-flow: column;
+  padding: 0 9px;
+  background: var(--danger-soft);
+  color: var(--danger);
+  animation: rec-pulse 1.6s ease-in-out infinite;
+}
+.rec-time { font-size: 12px; font-weight: 640; font-variant-numeric: tabular-nums; }
+@keyframes rec-pulse { 50% { opacity: .62; } }
+
 .tool-menu { position: relative; flex: none; }
 .tool-popover {
   display: none;
@@ -643,6 +657,19 @@ button { font: inherit; color: inherit; }
 
 .prose hr { border: 0; border-top: 1px solid var(--line); margin: 1.5em 0; }
 .prose img { max-width: 100%; border-radius: 10px; display: block; }
+/* A recording is a block of its own: the native player, and under it the name
+   and length, so a note full of clips can be told apart without playing them. */
+.audio-note {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface-2);
+}
+.audio-note audio { width: 100%; }
+.audio-name { font-size: 12px; color: var(--text-3); }
 .prose a { color: var(--accent); }
 .prose mark { background: var(--mark); border-radius: 3px; padding: 0 .15em; }
 
