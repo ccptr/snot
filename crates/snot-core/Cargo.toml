@@ -12,3 +12,9 @@ thiserror.workspace = true
 uuid.workspace = true
 rusqlite = { version = "0.37", features = ["bundled"] }
 sha2 = "0.10"
+pulldown-cmark = { version = "0.13.4", default-features = false }
+zip = { version = "8.6.0", default-features = false, features = ["deflate"] }
+
+[dev-dependencies]
+# Only to build the fixture archives the Samsung import tests read back.
+zip = { version = "8.6.0", default-features = false, features = ["deflate"] }
