@@ -180,12 +180,15 @@ interface ToolSpec {
   name: string;
   label: string;
   icon: string;
+  /** Shown instead of the icon where a word says it better than a glyph. */
+  text?: string;
   run: (e: Editor) => void;
   active?: (e: Editor) => boolean;
   enabled?: (e: Editor) => boolean;
 }
 
-const TOOLS: (ToolSpec | "sep")[] = [
+/** Undo and redo stay out on the ribbon: they are wanted mid-sentence. */
+const HISTORY: ToolSpec[] = [
   {
     name: "undo", label: "Undo", icon: "undo",
     run: (e) => e.chain().focus().undo().run(),
@@ -196,14 +199,23 @@ const TOOLS: (ToolSpec | "sep")[] = [
     run: (e) => e.chain().focus().redo().run(),
     enabled: (e) => e.can().redo(),
   },
-  "sep",
+];
+
+/**
+ * Everything that formats what is written. These all live in one sheet: on a
+ * desktop it is laid out inline in the ribbon, and on a phone it collapses
+ * behind a single "Aa" button. That is what keeps the phone ribbon to one row
+ * — the pen and the microphone are always in reach of a thumb, with nothing to
+ * scroll sideways to find.
+ */
+const FORMAT_TOOLS: (ToolSpec | "sep")[] = [
   {
-    name: "h1", label: "Title", icon: "note",
+    name: "h1", label: "Title", icon: "note", text: "H1",
     run: (e) => e.chain().focus().toggleHeading({ level: 1 }).run(),
     active: (e) => e.isActive("heading", { level: 1 }),
   },
   {
-    name: "h2", label: "Heading", icon: "note",
+    name: "h2", label: "Heading", icon: "note", text: "H2",
     run: (e) => e.chain().focus().toggleHeading({ level: 2 }).run(),
     active: (e) => e.isActive("heading", { level: 2 }),
   },
@@ -261,6 +273,12 @@ const TOOLS: (ToolSpec | "sep")[] = [
   },
 ];
 
+const ALIGNMENTS = [
+  ["left", "Align left", "alignLeft"],
+  ["center", "Align centre", "alignCenter"],
+  ["right", "Align right", "alignRight"],
+] as const;
+
 interface Toolbars {
   toolbar: HTMLElement;
   tray: HTMLElement;
@@ -275,28 +293,11 @@ function buildToolbar(
 ): Toolbars {
   const bar = el("div", { class: "toolbar", attrs: { role: "toolbar", "aria-label": "Formatting" } });
 
-  for (const spec of TOOLS) {
-    if (spec === "sep") {
-      bar.appendChild(el("span", { class: "toolbar-sep" }));
-      continue;
-    }
-    const b = button({
-      label: spec.label,
-      icon: spec.icon,
-      class: "tool",
-      showLabel: false,
-      onClick: () => spec.run(editor),
-    });
-    b.dataset.tool = spec.name;
-    if (spec.name === "h1") b.replaceChildren(el("span", { class: "tool-text", text: "H1" }));
-    if (spec.name === "h2") b.replaceChildren(el("span", { class: "tool-text", text: "H2" }));
-    // Keep the caret where it is when a tool is pressed.
-    b.addEventListener("mousedown", (e) => e.preventDefault());
-    bar.appendChild(b);
-  }
+  for (const spec of HISTORY) bar.appendChild(toolButton(editor, spec));
 
   bar.appendChild(el("span", { class: "toolbar-sep" }));
-  bar.appendChild(highlightMenu(editor));
+  bar.appendChild(formatMenu(editor));
+  bar.appendChild(el("span", { class: "toolbar-sep" }));
 
   const imageBtn = button({
     label: "Insert image",
@@ -310,6 +311,8 @@ function buildToolbar(
 
   bar.appendChild(recordButton(editor, noteId));
 
+  bar.appendChild(el("span", { class: "toolbar-sep" }));
+
   const penBtn = button({
     label: "Draw on the page",
     icon: "pen",
@@ -321,27 +324,13 @@ function buildToolbar(
   penBtn.addEventListener("mousedown", (e) => e.preventDefault());
   bar.appendChild(penBtn);
 
-  bar.appendChild(el("span", { class: "toolbar-sep" }));
-  for (const [name, label, iconName] of [
-    ["left", "Align left", "alignLeft"],
-    ["center", "Align centre", "alignCenter"],
-    ["right", "Align right", "alignRight"],
-  ] as const) {
-    const b = button({
-      label,
-      icon: iconName,
-      class: "tool",
-      showLabel: false,
-      onClick: () => editor.chain().focus().setTextAlign(name).run(),
-    });
-    b.dataset.align = name;
-    b.addEventListener("mousedown", (e) => e.preventDefault());
-    bar.appendChild(b);
-  }
-
   const tray = buildPenTray(ink, syncPage, () => setPenMode(false));
 
   const setPenMode = (on: boolean) => {
+    // Anything hanging open above the ribbon would cover the page being drawn.
+    for (const open of Array.from(bar.querySelectorAll<HTMLElement>(".tool-menu.open"))) {
+      setMenuOpen(open, false);
+    }
     ink.setEnabled(on);
     penBtn.classList.toggle("active", on);
     tray.hidden = !on;
@@ -351,6 +340,86 @@ function buildToolbar(
   setPenMode(false);
 
   return { toolbar: bar, tray, setPenMode };
+}
+
+/** One ribbon button, drawn from its spec and leaving the caret alone. */
+function toolButton(editor: Editor, spec: ToolSpec): HTMLElement {
+  const b = button({
+    label: spec.label,
+    icon: spec.icon,
+    class: "tool",
+    showLabel: false,
+    onClick: () => spec.run(editor),
+  });
+  b.dataset.tool = spec.name;
+  if (spec.text) b.replaceChildren(el("span", { class: "tool-text", text: spec.text }));
+  // Keep the caret where it is when a tool is pressed.
+  b.addEventListener("mousedown", (e) => e.preventDefault());
+  return b;
+}
+
+/** Opens or shuts a ribbon menu, keeping its trigger honest to a reader. */
+function setMenuOpen(wrap: HTMLElement, on: boolean): void {
+  wrap.classList.toggle("open", on);
+  wrap.firstElementChild?.setAttribute("aria-expanded", String(on));
+}
+
+/** A menu shuts when the next press lands anywhere but inside it. */
+function closeOnOutsideClick(wrap: HTMLElement): void {
+  document.addEventListener("click", (ev) => {
+    if (!wrap.contains(ev.target as Node)) setMenuOpen(wrap, false);
+  });
+}
+
+/**
+ * The formatting sheet: headings, marks, lists, blocks, highlight and
+ * alignment, all in one place. Where the ribbon has room it is laid out inline
+ * and the "Aa" button that opens it is hidden; on a phone the ribbon sits at
+ * the bottom of the screen with only room for a row, so the same buttons come
+ * up as a panel above it.
+ */
+function formatMenu(editor: Editor): HTMLElement {
+  const wrap = el("div", { class: "tool-menu format-menu" });
+  const trigger = button({
+    label: "Text formatting",
+    class: "tool format-trigger",
+    showLabel: false,
+    onClick: () => setMenuOpen(wrap, !wrap.classList.contains("open")),
+  });
+  trigger.replaceChildren(el("span", { class: "tool-text", text: "Aa" }));
+  trigger.setAttribute("aria-haspopup", "true");
+  trigger.setAttribute("aria-expanded", "false");
+  trigger.addEventListener("mousedown", (e) => e.preventDefault());
+
+  const sheet = el("div", { class: "tool-sheet" });
+  for (const spec of FORMAT_TOOLS) {
+    if (spec === "sep") {
+      sheet.appendChild(el("span", { class: "toolbar-sep" }));
+      continue;
+    }
+    sheet.appendChild(toolButton(editor, spec));
+  }
+
+  sheet.appendChild(el("span", { class: "toolbar-sep" }));
+  sheet.appendChild(highlightMenu(editor));
+
+  sheet.appendChild(el("span", { class: "toolbar-sep" }));
+  for (const [name, label, iconName] of ALIGNMENTS) {
+    const b = button({
+      label,
+      icon: iconName,
+      class: "tool",
+      showLabel: false,
+      onClick: () => editor.chain().focus().setTextAlign(name).run(),
+    });
+    b.dataset.align = name;
+    b.addEventListener("mousedown", (e) => e.preventDefault());
+    sheet.appendChild(b);
+  }
+
+  closeOnOutsideClick(wrap);
+  wrap.append(trigger, sheet);
+  return wrap;
 }
 
 /**
@@ -459,9 +528,11 @@ function highlightMenu(editor: Editor): HTMLElement {
     icon: "highlight",
     class: "tool",
     showLabel: false,
-    onClick: () => wrap.classList.toggle("open"),
+    onClick: () => setMenuOpen(wrap, !wrap.classList.contains("open")),
   });
   trigger.dataset.tool = "highlight";
+  trigger.setAttribute("aria-haspopup", "true");
+  trigger.setAttribute("aria-expanded", "false");
   trigger.addEventListener("mousedown", (e) => e.preventDefault());
 
   const menu = el("div", { class: "tool-popover" });
@@ -474,7 +545,7 @@ function highlightMenu(editor: Editor): HTMLElement {
       on: {
         click: () => {
           editor.chain().focus().setHighlight({ color }).run();
-          wrap.classList.remove("open");
+          setMenuOpen(wrap, false);
         },
       },
     });
@@ -488,16 +559,14 @@ function highlightMenu(editor: Editor): HTMLElement {
     on: {
       click: () => {
         editor.chain().focus().unsetHighlight().run();
-        wrap.classList.remove("open");
+        setMenuOpen(wrap, false);
       },
     },
   });
   none.appendChild(icon("close", 14));
   menu.appendChild(none);
 
-  document.addEventListener("click", (ev) => {
-    if (!wrap.contains(ev.target as Node)) wrap.classList.remove("open");
-  });
+  closeOnOutsideClick(wrap);
 
   wrap.append(trigger, menu);
   return wrap;
@@ -517,7 +586,7 @@ function pickImage(editor: Editor, noteId: () => string | null): void {
 }
 
 function refreshToolbar(editor: Editor, bar: HTMLElement): void {
-  for (const spec of TOOLS) {
+  for (const spec of [...HISTORY, ...FORMAT_TOOLS]) {
     if (spec === "sep") continue;
     const b = bar.querySelector<HTMLElement>(`[data-tool="${spec.name}"]`);
     if (!b) continue;
@@ -526,9 +595,15 @@ function refreshToolbar(editor: Editor, bar: HTMLElement): void {
   }
   const hl = bar.querySelector<HTMLElement>('[data-tool="highlight"]');
   hl?.classList.toggle("active", editor.isActive("highlight"));
-  for (const align of ["left", "center", "right"]) {
+  for (const [align] of ALIGNMENTS) {
     bar
       .querySelector<HTMLElement>(`[data-align="${align}"]`)
       ?.classList.toggle("active", editor.isActive({ textAlign: align }));
   }
+  // Shut, the sheet's own button is the only thing left to say that the words
+  // under the caret are bold, or a heading, or highlighted.
+  const anyFormat =
+    editor.isActive("highlight") ||
+    FORMAT_TOOLS.some((spec) => spec !== "sep" && (spec.active?.(editor) ?? false));
+  bar.querySelector<HTMLElement>(".format-trigger")?.classList.toggle("active", anyFormat);
 }
