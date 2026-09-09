@@ -107,11 +107,15 @@ export class App {
     this.bindShortcuts();
   }
 
+  /**
+   * A launch lands on the list. Opening the newest note instead dropped a
+   * phone straight into the editor — a screen deep in whatever was written
+   * last, before anybody had chosen to be there.
+   */
   async start(): Promise<void> {
     await this.reloadSidebar();
     await this.reloadList();
-    if (this.notes[0]) await this.open(this.notes[0].id);
-    else this.showEmptyEditor();
+    this.showEmptyEditor();
   }
 
   // ------------------------------------------------------------- layout
