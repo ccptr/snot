@@ -24,7 +24,7 @@ not built yet. See [Roadmap](#roadmap).
 | **Safety** | Deletes go to a trash you can restore from; nothing is destroyed until you empty it |
 | **Get in** | Import a folder of Markdown — front matter, tags, dates, nested folders and linked pictures all come across — or a Samsung Notes export. Nothing is ever dropped: a file that cannot be read still arrives as a note carrying the original |
 | **Get out** | Every note exports to Markdown. Attachments are ordinary files on disk |
-| **Fits the screen** | Three panes on a desktop, one pane with a drawer on a phone, light and dark following the system |
+| **Fits the screen** | Three panes on a desktop, one pane with a drawer on a phone, light and dark following the system. Android's back button steps back through the note, the drawer and any dialog before it leaves the app |
 
 Ink is stored as vectors, not a bitmap: a drawing made on a phone reopens on a
 desktop at the same proportions and stays sharp at any zoom. The default pen is
