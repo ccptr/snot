@@ -80,6 +80,29 @@ export function confirmAction(
   });
 }
 
+/**
+ * How much of the window the soft keyboard is covering, published as a CSS
+ * variable.
+ *
+ * Android does not take the covered strip away: the layout viewport keeps its
+ * full height and the keys are drawn over the bottom of it, so a toast pinned
+ * to that bottom is painted underneath them and never seen. The visual
+ * viewport is the part actually on screen, and `--keyboard` is the difference.
+ * Where the window really is resized instead, the two agree and it stays zero.
+ */
+function trackKeyboard(): void {
+  const view = window.visualViewport;
+  if (!view) return;
+  const place = () => {
+    const covered = Math.max(0, window.innerHeight - view.height - view.offsetTop);
+    document.documentElement.style.setProperty("--keyboard", `${Math.round(covered)}px`);
+  };
+  view.addEventListener("resize", place);
+  view.addEventListener("scroll", place);
+  place();
+}
+trackKeyboard();
+
 /** A short-lived message; errors stay up longer because they need reading. */
 export function toast(message: string, kind: "info" | "error" = "info"): void {
   let host = document.querySelector<HTMLElement>(".toasts");
