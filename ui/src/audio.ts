@@ -84,7 +84,7 @@ export const AudioNote = TiptapNode.create({
   },
 
   addNodeView() {
-    return ({ node }) => {
+    return ({ editor, node, getPos }) => {
       const attrs = node.attrs as AudioAttrs;
       const label = attrs.name || "Voice recording";
       const caption = el("span", {
@@ -94,6 +94,23 @@ export const AudioNote = TiptapNode.create({
       const player = el("audio", {
         class: "audio-player",
         attrs: { controls: "controls", preload: "metadata" },
+      });
+
+      // Selecting an atom and pressing Backspace is the editor's way of
+      // deleting one, which is no way at all on a phone with no keyboard in
+      // sight. The recording carries its own button instead, and says how to
+      // take the deletion back rather than asking twice.
+      const remove = button({
+        label: "Delete recording",
+        icon: "trash",
+        class: "btn ghost icon-only audio-delete",
+        showLabel: false,
+        onClick: () => {
+          const pos = getPos();
+          if (typeof pos !== "number" || !editor.isEditable) return;
+          editor.chain().focus().deleteRange({ from: pos, to: pos + node.nodeSize }).run();
+          toast("Recording removed — undo brings it back");
+        },
       });
 
       let objectUrl: string | null = null;
@@ -128,13 +145,20 @@ export const AudioNote = TiptapNode.create({
         }
       })();
 
-      const dom = el("div", { class: "audio-note", attrs: { "data-drag-handle": "" } }, player, caption);
+      const dom = el("div", { class: "audio-note", attrs: { "data-drag-handle": "" } },
+        el("div", { class: "audio-head" }, caption, remove),
+        player,
+      );
 
       return {
         dom,
-        // The player's own controls are the point of the node; ProseMirror
-        // must not swallow the clicks and drags that work them.
-        stopEvent: (event) => player.contains(event.target as Node),
+        // The player's own controls are the point of the node, and so is the
+        // delete button beside them; ProseMirror must not swallow the clicks
+        // and drags that work either.
+        stopEvent: (event) => {
+          const target = event.target as Node;
+          return player.contains(target) || remove.contains(target);
+        },
         ignoreMutation: () => true,
         destroy: () => {
           if (objectUrl) URL.revokeObjectURL(objectUrl);

@@ -669,7 +669,13 @@ button { font: inherit; color: inherit; }
   background: var(--surface-2);
 }
 .audio-note audio { width: 100%; }
-.audio-name { font-size: 12px; color: var(--text-3); }
+.audio-head { display: flex; align-items: center; gap: 8px; }
+.audio-name { flex: 1; min-width: 0; font-size: 12px; color: var(--text-3); }
+.audio-delete { flex: none; margin: -4px -4px -4px 0; }
+.audio-delete:hover { color: var(--danger); }
+/* A note in the trash is read-only, so it must not offer a button that edits
+   it. ProseMirror already marks that state on the editable element. */
+.ProseMirror[contenteditable="false"] .audio-delete { display: none; }
 .prose a { color: var(--accent); }
 .prose mark { background: var(--mark); border-radius: 3px; padding: 0 .15em; }
 
