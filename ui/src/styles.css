@@ -526,7 +526,11 @@ button { font: inherit; color: inherit; }
   z-index: 100;
   display: grid;
   place-items: center;
-  padding: 20px;
+  /* Centred in what is on screen, not in what is laid out: a dialog that asks
+     for text raises the keyboard itself, and the keys are drawn over the
+     bottom of the page rather than taking that strip away. Without this the
+     Cancel and Save the dialog is asking about sit underneath them. */
+  padding: 20px 20px calc(20px + var(--keyboard, 0px));
   background: rgba(10, 14, 11, .42);
   opacity: 0;
   transition: opacity .14s ease;
