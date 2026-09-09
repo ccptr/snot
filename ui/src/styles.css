@@ -426,6 +426,13 @@ button { font: inherit; color: inherit; }
 @keyframes rec-pulse { 50% { opacity: .62; } }
 
 .tool-menu { position: relative; flex: none; }
+
+/* The formatting tools. A desktop ribbon has room to lay them out in place, so
+   the button that opens them is only drawn on a phone (see the phone block). */
+.tool-sheet { display: flex; align-items: center; flex-wrap: wrap; gap: 1px; }
+.format-trigger { display: none; }
+.tool-menu.open > .tool:not(:disabled) { background: var(--accent-soft); color: var(--accent); }
+
 .tool-popover {
   display: none;
   position: absolute;
@@ -439,7 +446,9 @@ button { font: inherit; color: inherit; }
   background: var(--surface);
   box-shadow: var(--shadow);
 }
-.tool-menu.open .tool-popover { display: flex; }
+/* Child, not descendant: the highlight menu sits inside the formatting sheet,
+   and a loose selector opened its swatches whenever the sheet came up. */
+.tool-menu.open > .tool-popover { display: flex; }
 
 .hl-swatch {
   width: 22px;
@@ -917,6 +926,52 @@ button { font: inherit; color: inherit; }
     z-index: 50;
     background: rgba(10, 14, 11, .38);
   }
+
+  /* The ribbon belongs under the thumb, not up by the title — and the soft
+     keyboard is drawn over the bottom of the layout rather than taking that
+     strip away, so the pane gives up exactly as much height as the keys cover
+     and the ribbon rides on top of them. With no keyboard up it clears the
+     gesture bar instead, which is what the tag bar no longer has to do. */
+  .editor-pane { padding-bottom: max(var(--keyboard, 0px), env(safe-area-inset-bottom)); }
+  .toolbar-slot {
+    order: 1;
+    position: relative;
+    border-top: 1px solid var(--line-2);
+    border-bottom: 0;
+    background: var(--surface);
+  }
+  .tag-bar { padding-bottom: 8px; }
+
+  /* Thumbs, not pointers: the row is short enough to afford the bigger mark. */
+  .tool, .pen-tool { width: 38px; height: 38px; }
+
+  /* One row, never scrolled: everything that formats text comes up as a panel
+     over the note instead of sitting in the ribbon. It hangs off the slot, so
+     it is above the whole ribbon — pen tray and all — without measuring it. */
+  .format-menu { position: static; }
+  .format-trigger { display: grid; }
+  .tool-sheet {
+    display: none;
+    position: absolute;
+    z-index: 30;
+    left: 6px;
+    right: 6px;
+    bottom: 100%;
+    margin-bottom: 6px;
+    justify-content: center;
+    gap: 2px;
+    padding: 8px;
+    border: 1px solid var(--line);
+    border-radius: 14px;
+    background: var(--surface);
+    box-shadow: var(--shadow);
+  }
+  .format-menu.open .tool-sheet { display: flex; }
+
+  /* A menu in a ribbon at the bottom has to open upwards — and from above the
+     sheet, not from its own button, which would bury the row over it. */
+  .tool-sheet .tool-menu { position: static; }
+  .tool-popover { top: auto; bottom: calc(100% + 8px); left: 6px; }
 
   .prose { padding: 18px 16px 140px; font-size: 16px; }
   .note-card { padding-top: 13px; padding-bottom: 13px; }
