@@ -17,9 +17,9 @@
 
 interface Screen {
   /**
-   * Takes the screen down. It must close through the function `pushScreen`
-   * handed back, so that a screen dismissed from here and one dismissed by the
-   * app itself leave the same way.
+   * Takes the screen down, by the same path the app itself would: it calls
+   * whatever the app gave the function `pushScreen` handed back, so a screen
+   * closed by a back press and one closed by a button leave the same way.
    */
   dismiss: () => void;
 }
