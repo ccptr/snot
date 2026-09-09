@@ -6,6 +6,7 @@ import { api } from "./api";
 import { button, clear, debounce, el, formatDate, icon } from "./dom";
 import { createEditor, type NoteEditor } from "./editor";
 import { askText, confirmAction, menu, toast } from "./modal";
+import { pushScreen } from "./nav";
 import type { Folder, ImportSummary, Note, NoteSummary, Scope, SortBy, Tag } from "./types";
 
 type Theme = "system" | "light" | "dark";
@@ -99,6 +100,10 @@ export class App {
 
   private saveSoon = debounce(() => void this.persist(), 700);
 
+  /** Set while the note pane or the drawer is a screen the back gesture owns. */
+  private dropEditor: (() => void) | null = null;
+  private dropDrawer: (() => void) | null = null;
+
   constructor(mount: HTMLElement) {
     this.root = el("div", { class: "app", data: { pane: "list" } });
     mount.appendChild(this.root);
@@ -144,7 +149,7 @@ export class App {
         button({
           label: "Menu", icon: "sidebar", class: "btn ghost icon-only only-narrow",
           showLabel: false,
-          onClick: () => this.root.classList.toggle("sidebar-open"),
+          onClick: () => this.setDrawer(this.dropDrawer === null),
         }),
         el("div", { class: "list-heading" }, this.listTitle, this.listCount),
         button({
@@ -171,7 +176,7 @@ export class App {
     this.root.append(sidebar, listPane, editorPane);
     this.root.appendChild(el("div", {
       class: "scrim",
-      on: { click: () => this.root.classList.remove("sidebar-open") },
+      on: { click: () => this.setDrawer(false) },
     }));
 
     const runSearch = debounce(() => void this.reloadList(), 180);
@@ -194,12 +199,6 @@ export class App {
       } else if (mod && ev.key.toLowerCase() === "s") {
         ev.preventDefault();
         this.saveSoon.flush();
-      } else if (ev.key === "Escape") {
-        if (this.root.classList.contains("sidebar-open")) {
-          this.root.classList.remove("sidebar-open");
-        } else if (this.root.dataset.pane === "editor") {
-          this.showList();
-        }
       }
     });
   }
@@ -324,7 +323,7 @@ export class App {
     this.scope = scope;
     this.query = "";
     this.searchInput.value = "";
-    this.root.classList.remove("sidebar-open");
+    this.setDrawer(false);
     this.renderSidebar();
     await this.reloadList();
   }
@@ -588,7 +587,10 @@ export class App {
       toast(String(err), "error");
       return;
     }
-    this.root.dataset.pane = "editor";
+    if (this.root.dataset.pane !== "editor") {
+      this.root.dataset.pane = "editor";
+      this.dropEditor = pushScreen(() => this.showList());
+    }
     this.emptyState.replaceChildren();
     this.emptyState.classList.remove("visible");
 
@@ -627,11 +629,38 @@ export class App {
     this.saveSoon.flush();
     this.editor?.editor.commands.blur();
     (document.activeElement as HTMLElement | null)?.blur?.();
+    this.leaveEditor();
+  }
+
+  /**
+   * Goes back to the list and gives up the history entry the note pane held,
+   * so the next back press leaves the app rather than the pane it already left.
+   */
+  private leaveEditor(): void {
     this.root.dataset.pane = "list";
+    const drop = this.dropEditor;
+    this.dropEditor = null;
+    drop?.();
+  }
+
+  /**
+   * The sidebar is a drawer on a phone, and a drawer is a screen: it covers
+   * the list, so it comes off before a back press means "leave the app".
+   */
+  private setDrawer(open: boolean): void {
+    if (open === (this.dropDrawer !== null)) return;
+    this.root.classList.toggle("sidebar-open", open);
+    if (open) {
+      this.dropDrawer = pushScreen(() => this.setDrawer(false));
+      return;
+    }
+    const drop = this.dropDrawer;
+    this.dropDrawer = null;
+    drop?.();
   }
 
   private showEmptyEditor(): void {
-    this.root.dataset.pane = "list";
+    this.leaveEditor();
     this.emptyState.classList.add("visible");
     this.emptyState.replaceChildren(
       icon("note", 34),

@@ -1,16 +1,28 @@
 import { el } from "./dom";
+import { pushScreen } from "./nav";
 
 /**
  * The app draws its own dialogs: `window.prompt`/`confirm` are unavailable or
  * inconsistent across the webviews Tauri wraps, and these can be themed.
  */
-function shell(title: string, body: HTMLElement, actions: HTMLElement): () => void {
+function shell(
+  title: string,
+  body: HTMLElement,
+  actions: HTMLElement,
+  dismiss: () => void,
+): () => void {
   const card = el("div", { class: "modal-card", attrs: { role: "dialog", "aria-modal": "true" } },
     el("h2", { class: "modal-title", text: title }), body, actions);
   const backdrop = el("div", { class: "modal-backdrop" }, card);
   document.body.appendChild(backdrop);
   requestAnimationFrame(() => backdrop.classList.add("in"));
-  return () => backdrop.remove();
+  // A dialog covers the app, so the back gesture and Escape answer it rather
+  // than reaching past it to the note or the app itself.
+  const drop = pushScreen(dismiss);
+  return () => {
+    backdrop.remove();
+    drop();
+  };
 }
 
 export function askText(
@@ -36,9 +48,8 @@ export function askText(
     );
     input.addEventListener("keydown", (ev) => {
       if (ev.key === "Enter") done(input.value.trim() || null);
-      if (ev.key === "Escape") done(null);
     });
-    close = shell(title, el("div", { class: "modal-body" }, input), actions);
+    close = shell(title, el("div", { class: "modal-body" }, input), actions, () => done(null));
     input.focus();
     input.select();
   });
@@ -65,7 +76,7 @@ export function confirmAction(
         on: { click: () => done(true) },
       }),
     );
-    close = shell(title, el("p", { class: "modal-body", text: message }), actions);
+    close = shell(title, el("p", { class: "modal-body", text: message }), actions, () => done(false));
   });
 }
 
@@ -85,13 +96,27 @@ export function toast(message: string, kind: "info" | "error" = "info"): void {
   }, kind === "error" ? 5200 : 2400);
 }
 
+/** Closes whichever popup menu is open, if any. */
+let closeMenu: () => void = () => {};
+
 /** A small popup menu anchored under a button. */
 export function menu(
   anchor: HTMLElement,
   items: ({ label: string; danger?: boolean; onSelect: () => void } | "sep")[],
 ): void {
-  document.querySelector(".popmenu")?.remove();
+  closeMenu();
   const list = el("div", { class: "popmenu", attrs: { role: "menu" } });
+
+  const outside = (ev: MouseEvent) => {
+    if (!list.contains(ev.target as Node)) closeMenu();
+  };
+  let drop = () => {};
+  closeMenu = () => {
+    closeMenu = () => {};
+    list.remove();
+    document.removeEventListener("mousedown", outside);
+    drop();
+  };
   for (const item of items) {
     if (item === "sep") {
       list.appendChild(el("div", { class: "popmenu-sep" }));
@@ -103,7 +128,7 @@ export function menu(
       attrs: { type: "button", role: "menuitem" },
       on: {
         click: () => {
-          list.remove();
+          closeMenu();
           item.onSelect();
         },
       },
@@ -116,11 +141,6 @@ export function menu(
   list.style.top = `${Math.min(rect.bottom + 6, window.innerHeight - list.offsetHeight - 8)}px`;
   list.style.left = `${Math.max(8, Math.min(rect.left, window.innerWidth - width - 8))}px`;
 
-  const dismiss = (ev: MouseEvent) => {
-    if (!list.contains(ev.target as Node)) {
-      list.remove();
-      document.removeEventListener("mousedown", dismiss);
-    }
-  };
-  setTimeout(() => document.addEventListener("mousedown", dismiss), 0);
+  drop = pushScreen(() => closeMenu());
+  setTimeout(() => document.addEventListener("mousedown", outside), 0);
 }
