@@ -108,11 +108,12 @@ jobs:
         env:
           NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/27.2.12479018
         run: cargo tauri android init --ci
-      # Regenerating it also brings back the stock manifest, which declares no
-      # microphone permission — Android then auto-denies the recorder's runtime
-      # request, so the declaration is patched back in on every build.
-      - name: Declare the microphone permissions
-        run: tools/patch-permissions.sh
+      # Regenerating it also brings back the stock manifest and activity: no
+      # microphone permission, so Android auto-denies the recorder's runtime
+      # request, and no back-button handling, so a press closes the app. Both
+      # are patched back in on every build.
+      - name: Patch the generated project
+        run: tools/patch-generated.sh
 
       - name: Build the Android app
         env:

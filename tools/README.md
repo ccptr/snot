@@ -19,25 +19,33 @@ all the way down into the Kotlin package directories and refuses to change it in
 place, so `release-android.sh` deletes and regenerates `gen/android` whenever the
 tree on disk belongs to the other variant.
 
-## Permissions in a generated project
+## Patching a generated project
 
 `gen/android` and `gen/apple` are produced by `cargo tauri <platform> init` and
 are gitignored, so anything that has to live inside them cannot simply be edited
 once and committed — a fresh checkout, a CI run, or a variant switch that deletes
 the tree all start from the stock template again.
 
-Voice recording needs exactly that. wry's `RustWebChromeClient` already turns the
-webview's `AUDIO_CAPTURE` request into a runtime Android permission request, but
-Android auto-denies a runtime request for a permission the manifest never
-declared, and the generated manifest declares only `INTERNET`. iOS is stricter
-still: without `NSMicrophoneUsageDescription` in `Info.plist` the system does not
-deny the request, it kills the process.
+Two things need exactly that.
 
-`tools/patch-permissions.sh` puts those declarations back. It is idempotent, so
-it runs on every Android build rather than only after an init — from
-`release-android.sh` just after its init step, and as its own step in the
-`android` job of `.github/workflows/ci.yml`. Anything else a generated project
-needs belongs in that script too, for the same reason.
+**Voice recording.** wry's `RustWebChromeClient` already turns the webview's
+`AUDIO_CAPTURE` request into a runtime Android permission request, but Android
+auto-denies a runtime request for a permission the manifest never declared, and
+the generated manifest declares only `INTERNET`. iOS is stricter still: without
+`NSMicrophoneUsageDescription` in `Info.plist` the system does not deny the
+request, it kills the process.
+
+**The back button.** wry can answer it out of the webview's history, and Tauri's
+generated `TauriActivity` switches that off, so the first press closed the app
+from whatever pane, drawer or dialog was covering the screen. The UI keeps a
+history entry behind each of those (`ui/src/nav.ts`), and the generated
+`MainActivity` is patched to turn wry's handling back on.
+
+`tools/patch-generated.sh` puts all of that back. It is idempotent, so it runs on
+every Android build rather than only after an init — from `release-android.sh`
+just after its init step, and as its own step in the `android` job of
+`.github/workflows/ci.yml`. Anything else a generated project needs belongs in
+that script too, for the same reason.
 
 ## Locally
 

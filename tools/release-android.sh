@@ -175,11 +175,11 @@ if [ "$do_build" -eq 1 ]; then
         ( cd "$REPO_ROOT" && CI=1 cargo tauri android init --ci "${config_args[@]}" )
     fi
 
-    # The microphone permissions the voice recorder needs cannot be committed:
-    # they live in the generated manifest. Patching runs on every build rather
-    # than only after an init, because it is idempotent and a tree generated
-    # before this existed would otherwise stay silently unable to record.
-    "$REPO_ROOT/tools/patch-permissions.sh"
+    # The microphone permissions and the back-button handling cannot be
+    # committed: they live inside the generated project. Patching runs on every
+    # build rather than only after an init, because it is idempotent and a tree
+    # generated before this existed would otherwise stay silently wrong.
+    "$REPO_ROOT/tools/patch-generated.sh"
 
     # A universal APK, deliberately not --split-per-abi: Tauri's generated
     # build.gradle.kts gives every ABI the same versionCode, and F-Droid rejects
