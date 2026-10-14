@@ -249,7 +249,7 @@ private fun NoteGrid(state: LibraryState, host: NotesHost, onDialog: (Dialog) ->
         if (state.scope == ScopeArg.Trash && !state.searching) {
             item(span = StaggeredGridItemSpan.FullLine) {
                 Text(
-                    "Notes in the trash can be restored until you empty it.",
+                    "Notes in the trash are deleted after 30 days.",
                     color = c.textMuted,
                     fontSize = 13.sp,
                     modifier = Modifier.padding(horizontal = 4.dp, vertical = 4.dp),

@@ -7,7 +7,6 @@
 /android/build/
 /android/app/build/
 /android/local.properties
-/android/app/src/main/jniLibs/
-/android/app/src/main/java/uniffi/
+/android/.kotlin/
 .idea/
 *.iml
