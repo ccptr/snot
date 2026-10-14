@@ -75,7 +75,11 @@ live in the app's private storage and are included in device backups.
 cargo fmt --all --check
 cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
+cd android && ./gradlew testDebugUnitTest -PrustAbis=arm64-v8a -PrustProfile=dev
 ```
+
+CI runs these on every push, with unoptimised builds only; optimised builds
+are made for releases.
 
 ## Releases
 
@@ -95,6 +99,11 @@ is signed with the key in the `release` environment, which only deploys from
 
 To build an existing release again, run the workflow on its tag:
 `gh workflow run release.yml --ref v1.2.3`.
+
+Each desktop platform builds in its own job, in parallel; to add one, add an
+entry to the `desktop` matrix in `.github/workflows/release.yml`. Every
+Android ABI builds in one job into one APK; to add one, add it to `rustAbis`
+in `android/app/build.gradle.kts`.
 
 ## Not there yet
 

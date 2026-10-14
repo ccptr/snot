@@ -39,14 +39,9 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: cargo clippy -p snot-desktop --all-targets -- -D warnings
       - run: cargo test -p snot-desktop
-      - run: cargo build --release -p snot-desktop
-      - uses: actions/upload-artifact@v4
-        with:
-          name: snot-linux-x86_64
-          path: target/release/snot
 
   android:
-    name: Android APK
+    name: Android
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -56,14 +51,12 @@ jobs:
           java-version: 21
       - uses: dtolnay/rust-toolchain@stable
         with:
-          targets: aarch64-linux-android, armv7-linux-androideabi, x86_64-linux-android
+          targets: aarch64-linux-android
       - uses: Swatinem/rust-cache@v2
       - name: Android NDK
         run: yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "ndk;27.2.12479018" > /dev/null
-      - name: Build
+      # Compiles the Kotlin against freshly generated bindings and runs the
+      # unit tests, over one unoptimised build of snot-ffi.
+      - name: Unit tests
         working-directory: android
-        run: ./gradlew --no-daemon assembleRelease
-      - uses: actions/upload-artifact@v4
-        with:
-          name: snot-android-unsigned
-          path: android/app/build/outputs/apk/release/*.apk
+        run: ./gradlew --no-daemon testDebugUnitTest -PrustAbis=arm64-v8a -PrustProfile=dev

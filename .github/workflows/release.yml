@@ -1,7 +1,7 @@
 name: Release
 
-# Builds the Linux desktop app and the signed Android APK for a release and
-# attaches them to it. To rebuild an existing release, run it by hand on the
+# Builds the desktop app and the signed Android APK for a release and attaches
+# them to it. To rebuild an existing release, run it by hand on the
 # release's tag: `gh workflow run release.yml --ref v1.2.3`. The signing key is
 # in the `release` environment, which only deploys from v* tags.
 on:
@@ -35,36 +35,56 @@ jobs:
           fi
           echo "version=$version" >> "$GITHUB_OUTPUT"
 
+  # One job per desktop platform, all in parallel: each compiles everything
+  # for its own target on a native runner, so they have nothing to share. To
+  # support another, add an entry; a non-Linux one also needs a Package step.
   desktop:
-    name: Linux desktop (x86_64)
+    name: Desktop (${{ matrix.name }})
     needs: version
-    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: linux-x86_64
+            runner: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+    runs-on: ${{ matrix.runner }}
     env:
       VERSION: ${{ needs.version.outputs.version }}
     steps:
       - uses: actions/checkout@v4
       - name: GPUI build dependencies
+        if: runner.os == 'Linux'
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev libx11-xcb-dev \
             libxcb1-dev libfontconfig-dev libfreetype-dev libvulkan-dev libzstd-dev
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      # A cache saved under one tag is invisible to the next, so only restore;
+      # CI's cache on main brings the crate sources, including GPUI's.
       - uses: Swatinem/rust-cache@v2
-      - run: cargo build --release --locked -p snot-desktop
+        with:
+          save-if: false
+      - run: cargo build --release --locked -p snot-desktop --target ${{ matrix.target }}
       - name: Package
+        if: runner.os == 'Linux'
         run: |
-          name="snot-$VERSION-linux-x86_64"
+          name="snot-$VERSION-${{ matrix.name }}"
           mkdir -p "dist/$name"
           # The release profile keeps symbols for UniFFI; the app needs none.
-          strip -o "dist/$name/snot" target/release/snot
+          strip -o "dist/$name/snot" "target/${{ matrix.target }}/release/snot"
           cp README.md crates/snot-desktop/assets/fonts/*-OFL.txt "dist/$name/"
           tar -C dist -czf "dist/$name.tar.gz" "$name"
       - name: Attach to the release
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release upload "$TAG" dist/*.tar.gz --clobber --repo "$GITHUB_REPOSITORY"
+        run: gh release upload "$TAG" dist/snot-* --clobber --repo "$GITHUB_REPOSITORY"
 
+  # Every ABI in one job: they go into one APK, and share the JDK, NDK, Gradle
+  # and Rust's host tools. The ABIs are rustAbis in android/app/build.gradle.kts.
   android:
     name: Android APK
     needs: version
@@ -90,8 +110,10 @@ jobs:
           java-version: 21
       - uses: dtolnay/rust-toolchain@stable
         with:
-          targets: aarch64-linux-android, armv7-linux-androideabi, x86_64-linux-android
+          targets: aarch64-linux-android, armv7-linux-androideabi, i686-linux-android, x86_64-linux-android
       - uses: Swatinem/rust-cache@v2
+        with:
+          save-if: false
       - name: Android NDK
         run: yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "ndk;27.2.12479018" > /dev/null
       - name: Build

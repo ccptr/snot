@@ -30,6 +30,13 @@ val rustTargets = mapOf(
 val rustAbis = ((findProperty("rustAbis") as String?) ?: "arm64-v8a,armeabi-v7a,x86_64")
     .split(',').map { it.trim() }.filter { it.isNotEmpty() }
 
+/**
+ * Cargo profile for snot-ffi. Optimised by default, even in debug builds, so
+ * ink keeps up; CI type-checks and tests with `-PrustProfile=dev`.
+ */
+val rustProfile = (findProperty("rustProfile") as String?) ?: "release"
+val rustProfileDir = if (rustProfile == "dev") "debug" else rustProfile
+
 val rustLibs = layout.buildDirectory.dir("rustJniLibs")
 val bindingsDir = layout.buildDirectory.dir("generated/uniffi")
 
@@ -92,7 +99,7 @@ kotlin {
 // ---- snot-ffi ----------------------------------------------------------------
 //
 // The Rust core is compiled once per ABI with the NDK's clang as the linker,
-// always optimised, and its Kotlin bindings are generated from the library
+// optimised unless rustProfile says otherwise, and its Kotlin bindings are generated from the library
 // itself so they can never drift from it.
 
 val workspaceDir = rootProject.projectDir.parentFile
@@ -129,10 +136,10 @@ val cargoTasks = rustAbis.map { abi ->
             // 4 KB unless told otherwise, and such a library fails to load.
             environment("CARGO_TARGET_${envName}_RUSTFLAGS", "-C link-arg=-Wl,-z,max-page-size=16384")
         }
-        commandLine("cargo", "build", "--release", "-p", "snot-ffi", "--target", target)
+        commandLine("cargo", "build", "--profile", rustProfile, "-p", "snot-ffi", "--target", target)
         doLast {
             copy {
-                from(workspaceDir.resolve("target/$target/release/libsnot_ffi.so"))
+                from(workspaceDir.resolve("target/$target/$rustProfileDir/libsnot_ffi.so"))
                 into(rustLibs.get().dir(abi))
             }
         }
