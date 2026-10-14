@@ -607,7 +607,9 @@ fn pack(poly: &[[f32; 2]]) -> Vec<u8> {
 /// Reads `x, y, pressure` triples of little-endian `f32`.
 fn unpack_points(bytes: &[u8]) -> Vec<Point> {
     bytes
-        .chunks_exact(12)
+        .as_chunks::<12>()
+        .0
+        .iter()
         .map(|c| {
             let f = |i: usize| f32::from_le_bytes([c[i], c[i + 1], c[i + 2], c[i + 3]]);
             Point {

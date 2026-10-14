@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/snot-core", "crates/snot-ffi", "crates/uniffi-bindgen"]
+members = ["crates/snot-core", "crates/snot-ffi", "crates/snot-desktop", "crates/uniffi-bindgen"]
 
 [workspace.package]
 version = "0.1.0"
@@ -18,3 +18,9 @@ uniffi = "0.32.2"
 lto = "thin"
 codegen-units = 1
 strip = true
+
+# GPUI is built against these forks inside the Zed workspace; a git
+# dependency on it does not inherit Zed's patches, so they are repeated here.
+[patch.crates-io]
+async-task = { git = "https://github.com/smol-rs/async-task.git", rev = "b4486cd71e4e94fbda54ce6302444de14f4d190e" }
+calloop = { git = "https://github.com/zed-industries/calloop", rev = "eb6b4fd17b9af5ecc226546bdd04185391b3e265" }

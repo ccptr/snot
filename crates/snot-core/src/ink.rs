@@ -269,7 +269,7 @@ pub fn outline(points: &[Point], tool: Tool, width: f32) -> Vec<[f32; 2]> {
     if points.is_empty() {
         return Vec::new();
     }
-    let pts = smooth(points);
+    let pts = smooth(points, width);
     let radii = radii(&pts, tool, width);
     if pts.len() == 1 || path_length(&pts) < width * 0.25 {
         let r = radii.iter().cloned().fold(0.0, f32::max);
@@ -307,13 +307,23 @@ pub fn outline(points: &[Point], tool: Tool, width: f32) -> Vec<[f32; 2]> {
 
 /// One pass of a [¼ ½ ¼] filter, which takes the jitter out of digitiser
 /// input without pulling the stroke's ends.
-fn smooth(points: &[Point]) -> Vec<Point> {
+///
+/// Only densely sampled points are filtered. Where samples lie far apart —
+/// a fast flick, or a shape built from a few vertices — the filter would
+/// drag each corner towards its neighbours and shrink the shape, so those
+/// points stay where they are.
+fn smooth(points: &[Point], width: f32) -> Vec<Point> {
     if points.len() < 3 {
         return points.to_vec();
     }
+    let reach = (width * 2.0).max(6.0);
     let mut out = Vec::with_capacity(points.len());
     out.push(points[0]);
     for w in points.windows(3) {
+        if dist(&w[0], &w[1]) > reach || dist(&w[1], &w[2]) > reach {
+            out.push(w[1]);
+            continue;
+        }
         out.push(Point {
             x: 0.25 * w[0].x + 0.5 * w[1].x + 0.25 * w[2].x,
             y: 0.25 * w[0].y + 0.5 * w[1].y + 0.25 * w[2].y,
@@ -627,5 +637,27 @@ mod tests {
         let stroke = Stroke::new(Tool::Pen, "ink", 3.0, &raw);
         assert!(stroke.points.len() < 30);
         assert_eq!(stroke.points.last().unwrap().x, raw.last().unwrap().x);
+    }
+
+    #[test]
+    fn sparse_corners_keep_their_place() {
+        // A five-point star from its vertices alone: smoothing must not
+        // pull the points in towards the middle.
+        let star: Vec<Point> = (0..=5)
+            .map(|i| {
+                let a = i as f32 * std::f32::consts::PI * 0.8;
+                Point {
+                    x: 500.0 + 100.0 * a.cos(),
+                    y: 300.0 + 100.0 * a.sin(),
+                    pressure: 0.5,
+                }
+            })
+            .collect();
+        let poly = outline(&star, Tool::Marker, 4.0);
+        let reach = poly
+            .iter()
+            .map(|[x, y]| ((x - 500.0).powi(2) + (y - 300.0).powi(2)).sqrt())
+            .fold(0.0, f32::max);
+        assert!(reach > 95.0, "outline reaches only {reach}");
     }
 }
