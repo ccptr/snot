@@ -59,9 +59,9 @@ Needs JDK 21, the Android SDK with NDK 27.2.12479018, and the
 Rust Android targets:
 
 ```sh
-rustup target add aarch64-linux-android armv7-linux-androideabi x86_64-linux-android
+rustup target add aarch64-linux-android x86_64-linux-android
 cd android
-./gradlew installDebug                          # all ABIs
+./gradlew installDebug                          # both ABIs
 ./gradlew installDebug -PrustAbis=arm64-v8a     # faster, phones only
 ```
 
@@ -86,10 +86,10 @@ are made for releases.
 The version in the root `Cargo.toml` is the only one: the crates and the
 Android app both take it, with Android's `versionCode` =
 `MAJOR * 1000000 + MINOR * 1000 + PATCH`. Bump it, then publish a GitHub
-release tagged `v` plus that version, and a Linux tarball and a signed APK are
-attached to it; a tag that does not match `Cargo.toml` builds nothing. The APK
-is signed with the key in the `release` environment, which only deploys from
-`v*` tags:
+release tagged `v` plus that version, and a Linux tarball and a signed APK
+for each Android ABI are attached to it; a tag that does not match
+`Cargo.toml` builds nothing. The APKs are signed with the key in the
+`release` environment, which only deploys from `v*` tags:
 
 | Name | Kind | Value |
 |---|---|---|
@@ -102,8 +102,8 @@ To build an existing release again, run the workflow on its tag:
 
 Each desktop platform builds in its own job, in parallel; to add one, add an
 entry to the `desktop` matrix in `.github/workflows/release.yml`. Every
-Android ABI builds in one job into one APK; to add one, add it to `rustAbis`
-in `android/app/build.gradle.kts`.
+Android ABI builds in one job, into an APK of its own; to add one, add it to
+`rustAbis` in `android/app/build.gradle.kts`.
 
 ## Not there yet
 

@@ -83,10 +83,11 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: gh release upload "$TAG" dist/snot-* --clobber --repo "$GITHUB_REPOSITORY"
 
-  # Every ABI in one job: they go into one APK, and share the JDK, NDK, Gradle
-  # and Rust's host tools. The ABIs are rustAbis in android/app/build.gradle.kts.
+  # Every ABI in one job, as they share the JDK, NDK, Gradle, the Kotlin and
+  # resource builds and Rust's host tools; each still gets its own APK. The
+  # ABIs are rustAbis in android/app/build.gradle.kts.
   android:
-    name: Android APK
+    name: Android APKs
     needs: version
     runs-on: ubuntu-latest
     environment: release
@@ -110,7 +111,7 @@ jobs:
           java-version: 21
       - uses: dtolnay/rust-toolchain@stable
         with:
-          targets: aarch64-linux-android, armv7-linux-androideabi, i686-linux-android, x86_64-linux-android
+          targets: aarch64-linux-android, i686-linux-android, x86_64-linux-android
       - uses: Swatinem/rust-cache@v2
         with:
           save-if: false
@@ -122,12 +123,16 @@ jobs:
           SNOT_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
           SNOT_KEY_ALIAS: ${{ vars.ANDROID_KEY_ALIAS }}
         run: ./gradlew --no-daemon assembleRelease
-      - name: Check the signature
+      - name: Check the signatures
         run: |
           apksigner="$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)/apksigner"
           mkdir dist
-          cp android/app/build/outputs/apk/release/app-release.apk "dist/snot-$VERSION.apk"
-          "$apksigner" verify --print-certs "dist/snot-$VERSION.apk"
+          for apk in android/app/build/outputs/apk/release/app-*-release.apk; do
+            abi=$(basename "$apk" -release.apk)
+            abi=${abi#app-}
+            cp "$apk" "dist/snot-$VERSION-android-$abi.apk"
+            "$apksigner" verify --print-certs "dist/snot-$VERSION-android-$abi.apk"
+          done
       - name: Attach to the release
         env:
           GH_TOKEN: ${{ github.token }}

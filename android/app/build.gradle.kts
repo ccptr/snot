@@ -18,16 +18,16 @@ val appVersionCode = appVersion.substringBefore('-').split('.').map(String::toIn
     .let { (major, minor, patch) -> major * 1_000_000 + minor * 1_000 + patch }
 
 /**
- * ABIs to build snot-ffi for, as `abi to Rust target`. Override with
- * `-PrustAbis=arm64-v8a` to build fewer, or add `x86_64` for an emulator.
+ * ABIs to build snot-ffi for, as `abi to Rust target`; each gets its own APK.
+ * Override with `-PrustAbis=arm64-v8a` to build fewer, or add `x86` for an
+ * old emulator.
  */
 val rustTargets = mapOf(
     "arm64-v8a" to "aarch64-linux-android",
-    "armeabi-v7a" to "armv7-linux-androideabi",
     "x86" to "i686-linux-android",
     "x86_64" to "x86_64-linux-android",
 )
-val rustAbis = ((findProperty("rustAbis") as String?) ?: "arm64-v8a,armeabi-v7a,x86_64")
+val rustAbis = ((findProperty("rustAbis") as String?) ?: "arm64-v8a,x86_64")
     .split(',').map { it.trim() }.filter { it.isNotEmpty() }
 
 /**
@@ -51,8 +51,17 @@ android {
         targetSdk = 37
         versionCode = appVersionCode
         versionName = appVersion
-        // JNA ships dispatch libraries for ABIs snot-ffi is not built for.
-        ndk { abiFilters += rustAbis }
+    }
+
+    // One APK per ABI, each with only its own native libraries. This also
+    // leaves out JNA's dispatch libraries for ABIs snot-ffi is not built for.
+    splits {
+        abi {
+            isEnable = true
+            reset()
+            include(*rustAbis.toTypedArray())
+            isUniversalApk = false
+        }
     }
 
     // The release key comes from the environment so that it only ever lives in
@@ -123,12 +132,11 @@ val cargoTasks = rustAbis.map { abi ->
         // cargo does its own up-to-date checking.
         outputs.upToDateWhen { false }
 
-        val clangPrefix = if (target.startsWith("armv7")) "armv7a-linux-androideabi" else target
         val envName = target.uppercase().replace('-', '_')
         doFirst {
             val bin = ndkBin.get()
             val suffix = if (org.gradle.internal.os.OperatingSystem.current().isWindows) ".cmd" else ""
-            val clang = bin.resolve("$clangPrefix$minApi-clang$suffix").path
+            val clang = bin.resolve("$target$minApi-clang$suffix").path
             environment("CARGO_TARGET_${envName}_LINKER", clang)
             environment("CC_${target.replace('-', '_')}", clang)
             environment("AR_${target.replace('-', '_')}", bin.resolve("llvm-ar").path)
