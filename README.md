@@ -28,6 +28,15 @@ of Samsung Notes, with native apps for Linux and Android over one Rust core.
 Everything stays on the device, in a library you own: a SQLite database
 plus an attachments folder.
 
+## Install
+
+Snot is an alpha. Builds for Linux (x86_64) and Android (arm64 and x86_64)
+are attached to each [release](https://github.com/ccptr/snot/releases). On
+Android it is also in an F-Droid repository, which keeps it updated: add
+[`https://fdroid.ccptr.dev/repo`](https://fdroid.ccptr.dev/) in F-Droid's
+**Settings → Repositories** by scanning the QR code there, which pins the
+repository's signing key as it is added.
+
 ## Layout
 
 | Path | What it is |
@@ -99,6 +108,13 @@ for each Android ABI are attached to it; a tag that does not match
 
 To build an existing release again, run the workflow on its tag:
 `gh workflow run release.yml --ref v1.2.3`.
+
+A full release (not a prerelease) then asks
+[ccptr/fdroid](https://github.com/ccptr/fdroid) to collect its APKs into the
+F-Droid repository, which it signs and deploys itself. That needs the
+`FDROID_DISPATCH_TOKEN` repository secret: a fine-grained token with
+Contents: write on `ccptr/fdroid` only. If the dispatch fails, run
+`gh workflow run publish.yml -R ccptr/fdroid` instead.
 
 Each desktop platform builds in its own job, in parallel; to add one, add an
 entry to the `desktop` matrix in `.github/workflows/release.yml`. Every

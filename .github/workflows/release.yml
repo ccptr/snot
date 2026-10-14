@@ -137,3 +137,26 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: gh release upload "$TAG" dist/*.apk --clobber --repo "$GITHUB_REPOSITORY"
+
+  # ccptr/fdroid holds the index key and deploys the F-Droid repository; this
+  # only asks it to collect the APKs just attached. It takes the latest full
+  # release, so a prerelease has nothing to collect and does not ask.
+  fdroid:
+    name: F-Droid
+    needs: android
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ask ccptr/fdroid to publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+          DISPATCH_TOKEN: ${{ secrets.FDROID_DISPATCH_TOKEN }}
+        run: |
+          if [ "$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json isPrerelease -q .isPrerelease)" = true ]; then
+            echo "$TAG is a prerelease, so F-Droid does not take it"
+            exit 0
+          fi
+          if [ -z "$DISPATCH_TOKEN" ]; then
+            echo "::error::No FDROID_DISPATCH_TOKEN secret; run publish.yml in ccptr/fdroid by hand"
+            exit 1
+          fi
+          GH_TOKEN="$DISPATCH_TOKEN" gh api repos/ccptr/fdroid/dispatches -f event_type=publish
