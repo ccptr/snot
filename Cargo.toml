@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/snot-core"]
+members = ["crates/snot-core", "crates/snot-ffi", "crates/uniffi-bindgen"]
 
 [workspace.package]
 version = "0.1.0"

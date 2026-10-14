@@ -1,0 +1,15 @@
+[package]
+name = "snot-ffi"
+description = "UniFFI bindings exposing snot-core to the Android front-end"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lib]
+crate-type = ["cdylib", "lib"]
+name = "snot_ffi"
+
+[dependencies]
+snot-core.workspace = true
+thiserror.workspace = true
+uniffi.workspace = true
