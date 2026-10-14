@@ -6,7 +6,7 @@ use gpui::{
     AnyElement, AppContext, ClickEvent, Context, Entity, FocusHandle, Focusable, FontWeight,
     HighlightStyle, InteractiveElement, IntoElement, MouseButton, MouseDownEvent, ParentElement,
     Pixels, Point, Render, ScrollHandle, SharedString, StatefulInteractiveElement, Styled,
-    StyledText, Subscription, Window, actions, div, point, prelude::FluentBuilder, px,
+    StyledText, Subscription, WeakEntity, Window, actions, div, point, prelude::FluentBuilder, px,
 };
 use snot_core::note::{HIT_END, HIT_START};
 use snot_core::{Counts, Folder, Library, NoteSummary, Scope, SortBy, color};
@@ -29,6 +29,9 @@ actions!(
 );
 
 pub const CONTEXT: &str = "SnotApp";
+
+const SIDEBAR_WIDTH: f32 = 232.;
+const LIST_WIDTH: f32 = 320.;
 
 #[derive(Clone, PartialEq)]
 enum Menu {
@@ -62,6 +65,36 @@ pub struct SnotApp {
     focus: FocusHandle,
     _subs: Vec<Subscription>,
     editor_sub: Option<Subscription>,
+    /// The sidebar and the note list, made on first render.
+    panes: Option<[Entity<Pane>; 2]>,
+}
+
+#[derive(Clone, Copy)]
+enum PaneKind {
+    Sidebar,
+    List,
+}
+
+/// The sidebar or the note list as a view of its own. GPUI reuses a view's
+/// last frame until it is notified, so while a stroke is written in the
+/// note only the note is laid out and painted again, not the hundreds of
+/// elements beside it.
+struct Pane {
+    app: WeakEntity<SnotApp>,
+    kind: PaneKind,
+    _sub: Subscription,
+}
+
+impl Render for Pane {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let kind = self.kind;
+        self.app
+            .update(cx, |app, cx| match kind {
+                PaneKind::Sidebar => app.sidebar(cx).into_any_element(),
+                PaneKind::List => app.note_list(cx).into_any_element(),
+            })
+            .unwrap_or_else(|_| div().into_any_element())
+    }
 }
 
 impl Focusable for SnotApp {
@@ -102,6 +135,7 @@ impl SnotApp {
             focus: cx.focus_handle(),
             _subs: subs,
             editor_sub: None,
+            panes: None,
         };
         app.style_field(&app.search.clone(), cx);
         app.refresh(cx);
@@ -260,12 +294,9 @@ impl SnotApp {
     fn new_note(&mut self, handwriting: bool, window: &mut Window, cx: &mut Context<Self>) {
         self.save_all(cx);
         let folder = self.folder_for_new();
-        let made = if handwriting {
-            self.lib.create_ink_note(folder.as_deref())
-        } else {
-            self.lib.create_note(folder.as_deref())
+        let Ok(note) = self.lib.create_note(folder.as_deref()) else {
+            return;
         };
-        let Ok(note) = made else { return };
         if matches!(self.scope, Scope::Trash | Scope::Favorites) || !self.query.is_empty() {
             self.scope = Scope::All;
             self.query.clear();
@@ -273,6 +304,9 @@ impl SnotApp {
         }
         self.refresh(cx);
         self.open(&note.id, true, window, cx);
+        if handwriting && let Some((_, view)) = &self.editor {
+            view.update(cx, |v, cx| v.start_drawing(cx));
+        }
     }
 
     // ---- actions -----------------------------------------------------------
@@ -458,7 +492,7 @@ impl SnotApp {
         let c = &self.counts;
         let mut side = div()
             .id("sidebar")
-            .w(px(232.))
+            .w(px(SIDEBAR_WIDTH))
             .flex_none()
             .h_full()
             .flex()
@@ -752,7 +786,7 @@ impl SnotApp {
             list = list.child(self.card(n, cx));
         }
         div()
-            .w(px(320.))
+            .w(px(LIST_WIDTH))
             .flex_none()
             .h_full()
             .flex()
@@ -1269,6 +1303,28 @@ fn snippet(s: &str, t: &Theme) -> StyledText {
 impl Render for SnotApp {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let t = self.theme;
+        let [sidebar, list] = self
+            .panes
+            .get_or_insert_with(|| {
+                let app = cx.entity();
+                [PaneKind::Sidebar, PaneKind::List].map(|kind| {
+                    cx.new(|cx| Pane {
+                        app: app.downgrade(),
+                        kind,
+                        // Whatever changes the app may change what the pane shows.
+                        _sub: cx.observe(&app, |_, _, cx| cx.notify()),
+                    })
+                })
+            })
+            .clone();
+        let pane = |view: &Entity<Pane>, width: f32| {
+            view.clone().cached(
+                gpui::StyleRefinement::default()
+                    .w(px(width))
+                    .flex_none()
+                    .h_full(),
+            )
+        };
         let editor: AnyElement = match &self.editor {
             Some((_, v)) => v.clone().into_any_element(),
             None => self.empty_editor(cx).into_any_element(),
@@ -1288,8 +1344,8 @@ impl Render for SnotApp {
             .on_action(cx.listener(Self::act_save))
             .on_action(cx.listener(Self::act_quit))
             .on_action(cx.listener(Self::act_new_folder))
-            .child(self.sidebar(cx))
-            .child(self.note_list(cx))
+            .child(pane(&sidebar, SIDEBAR_WIDTH))
+            .child(pane(&list, LIST_WIDTH))
             .child(div().flex_1().min_w_0().h_full().child(editor))
             .children(
                 self.menu

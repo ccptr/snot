@@ -6,6 +6,7 @@
 //! mouse hit-testing and the platform text-input protocol.
 
 mod ink;
+mod tiles;
 mod view;
 
 use std::cell::RefCell;
@@ -20,7 +21,6 @@ use gpui::{
     FocusHandle, Focusable, Pixels, Point, ScrollHandle, Subscription, Task, TextLayout,
     UTF16Selection, Window, actions, point, px,
 };
-use snot_core::doc::Content;
 use snot_core::editor::{Caret, EditSession, Insert};
 use snot_core::{Library, Mark, Note, Paper, ParaStyle};
 use unicode_segmentation::UnicodeSegmentation;
@@ -76,6 +76,9 @@ actions!(
         Checklist,
         ToggleCheck,
         Escape,
+        ZoomIn,
+        ZoomOut,
+        ZoomReset,
     ]
 );
 
@@ -125,7 +128,19 @@ pub struct Geometry {
     /// Blocks whose text layout has been measured and painted, so asking
     /// it for positions will not panic.
     pub ready: HashSet<String>,
-    pub ink: HashMap<String, Bounds<Pixels>>,
+    /// Top left of the page, in window pixels.
+    pub page: Point<Pixels>,
+    /// Bottom of the last block, in window pixels.
+    pub blocks_bottom: Pixels,
+    /// Height of all the blocks together.
+    pub blocks_height: Pixels,
+    /// Top and bottom of each block, from the top of the scrolled content.
+    pub rects: HashMap<String, (Pixels, Pixels)>,
+    /// A block to bring into view on the next frame.
+    pub reveal: Option<String>,
+    /// A block brought into view this frame from where it was last laid
+    /// out, to look at again once it has been laid out afresh.
+    pub recheck: Option<String>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -154,6 +169,8 @@ pub struct NoteView {
     pending_marks: Option<Vec<Mark>>,
     marked: Option<Range<usize>>,
     pub(crate) geometry: Rc<RefCell<Geometry>>,
+    /// The blocks, as a view of their own: see [`view::Blocks`].
+    pub(crate) blocks: Option<Entity<view::Blocks>>,
     pub(crate) scroll: ScrollHandle,
     pub(crate) theme: Theme,
     pub(crate) popover: Option<(Popover, Point<Pixels>)>,
@@ -222,10 +239,6 @@ impl NoteView {
             f
         });
         let subs = vec![cx.subscribe_in(&title, window, Self::on_title_event)];
-        let starts_with_ink = matches!(
-            note.doc.blocks.first().map(|b| &b.content),
-            Some(Content::Ink(_))
-        );
         let mut view = NoteView {
             color: note.color.clone(),
             favorite: note.favorite,
@@ -239,15 +252,12 @@ impl NoteView {
             title,
             sel: None,
             picked: None,
-            tool: if starts_with_ink {
-                InkTool::Pen
-            } else {
-                InkTool::Type
-            },
+            tool: InkTool::Type,
             ink: ink::InkState::default(),
             pending_marks: None,
             marked: None,
             geometry: Rc::new(RefCell::new(Geometry::default())),
+            blocks: None,
             scroll: ScrollHandle::new(),
             theme,
             popover: None,
@@ -399,11 +409,8 @@ impl NoteView {
     }
 
     pub(crate) fn scroll_to_caret(&self) {
-        if let Some(sel) = &self.sel
-            && let Some(ix) = self.session.doc().index_of(&sel.block)
-        {
-            // Child 0 of the scroll area is the title.
-            self.scroll.scroll_to_item(ix + 1);
+        if let Some(sel) = &self.sel {
+            self.geometry.borrow_mut().reveal = Some(sel.block.clone());
         }
     }
 
@@ -964,20 +971,30 @@ impl NoteView {
         cx.notify();
     }
 
+    fn zoom_in(&mut self, _: &ZoomIn, _: &mut Window, cx: &mut Context<Self>) {
+        self.zoom_by(1.25, cx)
+    }
+
+    fn zoom_out(&mut self, _: &ZoomOut, _: &mut Window, cx: &mut Context<Self>) {
+        self.zoom_by(0.8, cx)
+    }
+
+    fn zoom_reset(&mut self, _: &ZoomReset, _: &mut Window, cx: &mut Context<Self>) {
+        self.zoom_by(0., cx)
+    }
+
+    /// Starts on the pen, for a note made to be written by hand.
+    pub fn start_drawing(&mut self, cx: &mut Context<Self>) {
+        self.tool = InkTool::Pen;
+        cx.notify();
+    }
+
     // ---- blocks ----------------------------------------------------------
 
     fn insertion_point(&self) -> Option<String> {
         self.picked
             .clone()
             .or_else(|| self.sel.as_ref().map(|s| s.block.clone()))
-    }
-
-    pub fn insert_drawing(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let after = self.insertion_point();
-        let id = self.session.insert(after.as_deref(), Insert::Ink);
-        self.tool = InkTool::Pen;
-        self.picked = None;
-        self.after_insert(&id, window, cx);
     }
 
     pub fn insert_divider(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -1020,7 +1037,7 @@ impl NoteView {
             && let Some(next) = doc.blocks.get(ix + 1).filter(|b| b.as_text().is_some())
         {
             self.sel = Some(Selection::caret(next.id.clone(), 0));
-            self.scroll.scroll_to_item(ix + 1);
+            self.scroll_to_caret();
         }
         window.focus(&self.focus, cx);
         self.changed(cx);
@@ -1040,18 +1057,13 @@ impl NoteView {
         self.changed(cx);
     }
 
-    pub fn set_paper(&mut self, id: &str, paper: Paper, cx: &mut Context<Self>) {
-        self.session.set_paper(id, paper);
+    pub fn set_paper(&mut self, paper: Paper, cx: &mut Context<Self>) {
+        self.session.set_paper(paper);
         self.changed(cx);
     }
 
-    pub fn extend_ink(&mut self, id: &str, cx: &mut Context<Self>) {
-        self.session.extend_ink(id, 400.0);
-        self.changed(cx);
-    }
-
-    pub fn clear_ink(&mut self, id: &str, cx: &mut Context<Self>) {
-        self.session.clear_ink(id);
+    pub fn clear_ink(&mut self, cx: &mut Context<Self>) {
+        self.session.clear_ink();
         self.changed(cx);
     }
 
@@ -1400,5 +1412,9 @@ pub fn key_bindings() -> Vec<gpui::KeyBinding> {
         KeyBinding::new("ctrl-(", Checklist, c),
         KeyBinding::new("ctrl-enter", ToggleCheck, c),
         KeyBinding::new("escape", Escape, c),
+        KeyBinding::new("ctrl-=", ZoomIn, c),
+        KeyBinding::new("ctrl-+", ZoomIn, c),
+        KeyBinding::new("ctrl--", ZoomOut, c),
+        KeyBinding::new("ctrl-0", ZoomReset, c),
     ]
 }

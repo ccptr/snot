@@ -1,7 +1,7 @@
 //! An open note being edited.
 //!
 //! Every structural edit — Enter, Backspace at the start of a line, list
-//! and heading changes, ink — goes through here, so the desktop and the
+//! and heading changes, handwriting — goes through here, so the desktop and the
 //! phone behave identically and undo works the same on both. Front-ends
 //! own carets, selection and drawing; the session owns the document.
 
@@ -10,7 +10,7 @@ use std::ops::Range;
 use std::sync::Arc;
 
 use crate::doc::{Block, Content, Doc, ImageBlock, Mark, ParaStyle, TextBlock, new_block_id};
-use crate::ink::{InkBlock, Paper, Stroke};
+use crate::ink::{InkLayer, Paper, Stroke};
 use crate::note::{Note, now_ms};
 
 const UNDO_LIMIT: usize = 200;
@@ -29,7 +29,6 @@ pub struct Caret {
 #[derive(Clone, Debug)]
 pub enum Insert {
     Divider,
-    Ink,
     Image { attachment: String, aspect: f32 },
 }
 
@@ -37,7 +36,7 @@ pub enum Insert {
 enum Step {
     Typing(String),
     Title,
-    Erase(String),
+    Erase,
     Other,
 }
 
@@ -54,6 +53,8 @@ pub struct EditSession {
     redo: Vec<Snapshot>,
     last: Option<(Step, i64)>,
     revisions: HashMap<String, u64>,
+    blocks_revision: u64,
+    ink_revision: u64,
     clock: u64,
     dirty: bool,
 }
@@ -67,6 +68,8 @@ impl EditSession {
             redo: Vec::new(),
             last: None,
             revisions: HashMap::new(),
+            blocks_revision: 0,
+            ink_revision: 0,
             clock: 0,
             dirty: false,
         };
@@ -96,9 +99,21 @@ impl EditSession {
     }
 
     /// A number that changes whenever the block does, so a front-end can
-    /// keep laid-out text or tessellated ink until it is stale.
+    /// keep laid-out text until it is stale.
     pub fn revision(&self, block: &str) -> u64 {
         self.revisions.get(block).copied().unwrap_or(0)
+    }
+
+    /// A number that changes whenever any block does, or blocks come, go
+    /// or move: when it holds, so does all the text on the page.
+    pub fn blocks_revision(&self) -> u64 {
+        self.blocks_revision
+    }
+
+    /// The same for the handwriting, so outlines are only redone when it
+    /// changes.
+    pub fn ink_revision(&self) -> u64 {
+        self.ink_revision
     }
 
     pub fn can_undo(&self) -> bool {
@@ -118,6 +133,7 @@ impl EditSession {
     fn touch(&mut self, block: &str) {
         self.clock += 1;
         self.revisions.insert(block.to_string(), self.clock);
+        self.blocks_revision = self.clock;
     }
 
     fn touch_all(&mut self) {
@@ -130,6 +146,13 @@ impl EditSession {
             .iter()
             .map(|b| (b.id.clone(), clock))
             .collect();
+        self.blocks_revision = clock;
+        self.ink_revision = clock;
+    }
+
+    fn touch_ink(&mut self) {
+        self.clock += 1;
+        self.ink_revision = self.clock;
     }
 
     /// Records the state before an edit, merging into the previous step
@@ -140,7 +163,7 @@ impl EditSession {
             (Some((last, at)), Step::Typing(_) | Step::Title) => {
                 last == &step && now - at < TYPING_PAUSE_MS
             }
-            (Some((last, _)), Step::Erase(_)) => last == &step,
+            (Some((last, _)), Step::Erase) => last == &step,
             _ => false,
         };
         if !continues {
@@ -405,8 +428,8 @@ impl EditSession {
                     offset,
                 })
             }
-            // A divider is cheap to recreate, so it goes; a drawing or a
-            // picture is not, so backspace stops at it.
+            // A divider is cheap to recreate, so it goes; a picture is
+            // not, so backspace stops at it.
             Content::Divider => {
                 self.checkpoint(
                     Step::Other,
@@ -527,7 +550,6 @@ impl EditSession {
         self.checkpoint(Step::Other, None);
         let content = match what {
             Insert::Divider => Content::Divider,
-            Insert::Ink => Content::Ink(Arc::new(InkBlock::default())),
             Insert::Image { attachment, aspect } => Content::Image(ImageBlock {
                 attachment,
                 aspect: if aspect.is_finite() && aspect > 0.0 {
@@ -616,77 +638,53 @@ impl EditSession {
 
     // ---- ink -------------------------------------------------------------
 
-    pub fn ink(&self, block: &str) -> Option<&InkBlock> {
-        match &self.note.doc.block(block)?.content {
-            Content::Ink(ink) => Some(ink),
-            _ => None,
-        }
+    pub fn ink(&self) -> &InkLayer {
+        &self.note.doc.ink
     }
 
-    fn ink_mut(&mut self, block: &str) -> Option<&mut InkBlock> {
-        match &mut self.note.doc.block_mut(block)?.content {
-            Content::Ink(ink) => Some(Arc::make_mut(ink)),
-            _ => None,
-        }
+    fn ink_mut(&mut self) -> &mut InkLayer {
+        Arc::make_mut(&mut self.note.doc.ink)
     }
 
-    pub fn add_stroke(&mut self, block: &str, stroke: Stroke) -> bool {
-        if self.ink(block).is_none() || stroke.points.is_empty() {
+    pub fn add_stroke(&mut self, stroke: Stroke) -> bool {
+        if stroke.points.is_empty() {
             return false;
         }
         self.checkpoint(Step::Other, None);
-        self.ink_mut(block)
-            .expect("checked above")
-            .add_stroke(stroke);
-        self.touch(block);
+        self.ink_mut().add_stroke(stroke);
+        self.touch_ink();
         true
     }
 
-    /// Erases the strokes under the eraser. A whole swipe is one undo step,
-    /// up to the next [`end_gesture`](Self::end_gesture).
-    pub fn erase(&mut self, block: &str, x: f32, y: f32, radius: f32) -> usize {
-        let Some(ink) = self.ink(block) else { return 0 };
-        if !ink.strokes.iter().any(|s| s.hit(x, y, radius)) {
-            return 0;
+    /// Erases the strokes under the eraser and returns where they were. A
+    /// whole swipe is one undo step, up to the next
+    /// [`end_gesture`](Self::end_gesture).
+    pub fn erase(&mut self, x: f32, y: f32, radius: f32) -> Vec<usize> {
+        if !self.ink().strokes.iter().any(|s| s.hit(x, y, radius)) {
+            return Vec::new();
         }
-        self.checkpoint(Step::Erase(block.into()), None);
-        let n = self
-            .ink_mut(block)
-            .expect("checked above")
-            .erase_at(x, y, radius);
-        self.touch(block);
-        n
+        self.checkpoint(Step::Erase, None);
+        let removed = self.ink_mut().erase_at(x, y, radius);
+        self.touch_ink();
+        removed
     }
 
-    pub fn set_paper(&mut self, block: &str, paper: Paper) {
-        if self.ink(block).is_none_or(|i| i.paper == paper) {
+    pub fn set_paper(&mut self, paper: Paper) {
+        if self.ink().paper == paper {
             return;
         }
         self.checkpoint(Step::Other, None);
-        self.ink_mut(block).expect("checked above").paper = paper;
-        self.touch(block);
+        self.ink_mut().paper = paper;
+        self.touch_ink();
     }
 
-    pub fn clear_ink(&mut self, block: &str) {
-        if self.ink(block).is_none_or(|i| i.strokes.is_empty()) {
+    pub fn clear_ink(&mut self) {
+        if self.ink().strokes.is_empty() {
             return;
         }
         self.checkpoint(Step::Other, None);
-        self.ink_mut(block).expect("checked above").strokes.clear();
-        self.touch(block);
-    }
-
-    /// Adds room at the foot of a drawing.
-    pub fn extend_ink(&mut self, block: &str, by: f32) {
-        if self.ink(block).is_none() {
-            return;
-        }
-        self.checkpoint(Step::Other, None);
-        let ink = self.ink_mut(block).expect("checked above");
-        ink.height = (ink.height + by)
-            .max(ink.content_bottom() + 40.0)
-            .max(200.0);
-        self.touch(block);
+        self.ink_mut().strokes.clear();
+        self.touch_ink();
     }
 }
 
@@ -701,7 +699,7 @@ mod tests {
             id: "n".into(),
             folder_id: None,
             title: String::new(),
-            doc: Doc { blocks },
+            doc: Doc::of(blocks),
             color: None,
             pinned: false,
             favorite: false,
@@ -796,57 +794,61 @@ mod tests {
     fn inserting_on_an_empty_line_replaces_it() {
         let mut s = session(&[("text", ParaStyle::Body), ("", ParaStyle::Body)]);
         let empty = ids(&s)[1].clone();
-        let ink = s.insert(Some(&empty), Insert::Ink);
+        let divider = s.insert(Some(&empty), Insert::Divider);
         assert_eq!(texts(&s), ["text", "#", ""]);
-        assert_eq!(ids(&s)[1], ink);
-        // The trailing line is there to type after the drawing.
+        assert_eq!(ids(&s)[1], divider);
+        // The trailing line is there to type after the divider.
         assert!(s.doc().blocks.last().unwrap().as_text().is_some());
     }
 
     #[test]
     fn a_swipe_of_the_eraser_is_one_undo_step() {
         let mut s = session(&[("", ParaStyle::Body)]);
-        let ink = s.insert(None, Insert::Ink);
+        let text_rev = s.blocks_revision();
         for i in 0..3 {
             let y = 100.0 + i as f32 * 50.0;
-            s.add_stroke(
-                &ink,
-                Stroke::new(
-                    Tool::Pen,
-                    "ink",
-                    3.0,
-                    &[
-                        Point {
-                            x: 0.0,
-                            y,
-                            pressure: 0.5,
-                        },
-                        Point {
-                            x: 100.0,
-                            y,
-                            pressure: 0.5,
-                        },
-                    ],
-                ),
-            );
+            s.add_stroke(Stroke::new(
+                Tool::Pen,
+                "ink",
+                3.0,
+                &[
+                    Point {
+                        x: 0.0,
+                        y,
+                        pressure: 0.5,
+                    },
+                    Point {
+                        x: 100.0,
+                        y,
+                        pressure: 0.5,
+                    },
+                ],
+            ));
         }
         s.end_gesture();
+        let rev = s.ink_revision();
         for i in 0..3 {
-            s.erase(&ink, 50.0, 100.0 + i as f32 * 50.0, 5.0);
+            s.erase(50.0, 100.0 + i as f32 * 50.0, 5.0);
         }
-        assert_eq!(s.ink(&ink).unwrap().strokes.len(), 0);
+        assert_eq!(s.ink().strokes.len(), 0);
+        assert_ne!(s.ink_revision(), rev);
+        // Writing and erasing leave the text to be shown as it was.
+        assert_eq!(s.blocks_revision(), text_rev);
         s.undo();
-        assert_eq!(s.ink(&ink).unwrap().strokes.len(), 3);
+        assert_eq!(s.ink().strokes.len(), 3);
+        // Text is untouched by it all, and stays where it was.
+        assert_eq!(texts(&s), [""]);
     }
 
     #[test]
     fn revisions_move_only_for_touched_blocks() {
         let mut s = session(&[("a", ParaStyle::Body), ("b", ParaStyle::Body)]);
         let [a, b] = [ids(&s)[0].clone(), ids(&s)[1].clone()];
-        let (ra, rb) = (s.revision(&a), s.revision(&b));
+        let (ra, rb, all) = (s.revision(&a), s.revision(&b), s.blocks_revision());
         s.replace(&a, 1..1, "x", None);
         assert_ne!(s.revision(&a), ra);
         assert_eq!(s.revision(&b), rb);
+        assert_ne!(s.blocks_revision(), all);
     }
 
     #[test]

@@ -13,6 +13,7 @@ import app.snot.ffi.CaretInfo
 import app.snot.ffi.MarkArg
 import app.snot.ffi.NoteEditor
 import app.snot.ffi.NoteInfo
+import app.snot.ffi.PaperArg
 import app.snot.ffi.ScopeArg
 import app.snot.ffi.SnotLibrary
 import app.snot.ffi.SortArg
@@ -29,7 +30,7 @@ enum class InkTool { TYPE, PEN, MARKER, HIGHLIGHTER, ERASER;
             TYPE, ERASER -> null
         }
 
-    /** Nib sizes offered, in ink units; the eraser's is its radius. */
+    /** Nib sizes offered, in page units; the eraser's is its radius. */
     val widths: List<Float>
         get() = when (this) {
             PEN -> listOf(2f, 4f, 7f, 12f)
@@ -66,6 +67,22 @@ class EditorState(
     val fields = mutableStateMapOf<String, TextFieldValue>()
     var title by mutableStateOf(TextFieldValue(editor.title()))
         private set
+
+    /** Every stroke, outlined, in the order written. */
+    var strokes: List<StrokePath> by mutableStateOf(emptyList())
+        private set
+    /**
+     * How many of the newest strokes the front buffer is still showing.
+     * The page leaves them out until the front buffer hands them over.
+     */
+    var frontTail by mutableIntStateOf(0)
+    var paper by mutableStateOf(editor.paper())
+        private set
+    /** The lowest point the handwriting reaches, in page units. */
+    var inkBottom by mutableStateOf(0f)
+        private set
+    /** The core's ink revision that [strokes] shows. */
+    private var shownInk = -1L
 
     var canUndo by mutableStateOf(false)
         private set
@@ -126,6 +143,7 @@ class EditorState(
             }
         }
         fields.keys.retainAll(live)
+        if (editor.inkRevision() != shownInk) reloadInk()
         canUndo = editor.canUndo()
         canRedo = editor.canRedo()
     }
@@ -133,6 +151,26 @@ class EditorState(
     private fun changed(caret: CaretInfo? = null) {
         sync()
         if (caret != null) pendingCaret = caret
+        version++
+    }
+
+    private fun reloadInk() {
+        strokes = editor.inkPaths(dark).map(::StrokePath)
+        frontTail = 0
+        paper = editor.paper()
+        inkBottom = editor.inkBottom()
+        shownInk = editor.inkRevision()
+    }
+
+    /**
+     * After a stroke is added or erased in place: the text is untouched,
+     * so nothing else is re-read. This runs between strokes, where any
+     * delay would hold up the next one.
+     */
+    private fun inkChanged() {
+        shownInk = editor.inkRevision()
+        canUndo = editor.canUndo()
+        canRedo = editor.canRedo()
         version++
     }
 
@@ -177,13 +215,8 @@ class EditorState(
     }
 
     /** An untitled note with nothing written or drawn in it. */
-    fun isBlank(): Boolean = title.text.isBlank() && blocks.all {
-        when (val k = it.kind) {
-            is BlockKind.Text -> k.text.isEmpty()
-            is BlockKind.Ink -> k.strokes == 0
-            else -> false
-        }
-    }
+    fun isBlank(): Boolean = title.text.isBlank() && editor.strokeCount() == 0 &&
+        blocks.all { (it.kind as? BlockKind.Text)?.text?.isEmpty() == true }
 
     /** Puts the caret at the end of the last text block. */
     fun caretAtEnd() {
@@ -266,12 +299,6 @@ class EditorState(
     /** Where inserted blocks go: after the focused block, else at the end. */
     private fun anchor(): String? = focused ?: blocks.lastOrNull()?.id
 
-    fun insertInk(): String {
-        val id = editor.insertInk(anchor())
-        changed()
-        return id
-    }
-
     fun insertDivider() = typeAfter(editor.insertDivider(anchor()))
 
     fun insertImage(attachment: String, aspect: Float) = typeAfter(editor.insertImage(anchor(), attachment, aspect))
@@ -301,29 +328,35 @@ class EditorState(
 
     // ---- ink ----------------------------------------------------------------
 
-    fun addStroke(block: String, tool: ToolArg, pen: Pen, points: ByteArray) {
-        if (editor.addStroke(block, tool, pen.color, pen.width, points)) changed()
+    /** Adds a finished stroke; [front] when the front buffer is showing it still. */
+    fun addStroke(tool: ToolArg, pen: Pen, points: ByteArray, front: Boolean) {
+        val path = editor.addStroke(tool, pen.color, pen.width, points, dark) ?: return
+        val stroke = StrokePath(path)
+        strokes = strokes + stroke
+        if (front) frontTail++
+        inkBottom = maxOf(inkBottom, stroke.bottom)
+        inkChanged()
     }
 
-    fun erase(block: String, x: Float, y: Float) {
+    fun erase(x: Float, y: Float) {
         val radius = pens.getValue(InkTool.ERASER).width
-        if (editor.erase(block, x, y, radius) > 0) changed()
+        val gone = editor.erase(x, y, radius)
+        if (gone.isEmpty()) return
+        val at = gone.toHashSet()
+        strokes = strokes.filterIndexed { i, _ -> i !in at }
+        frontTail = 0
+        inkChanged()
     }
 
     fun endGesture() = editor.endGesture()
 
-    fun setPaper(block: String, paper: app.snot.ffi.PaperArg) {
-        editor.setPaper(block, paper)
+    fun choosePaper(paper: PaperArg) {
+        editor.setPaper(paper)
         changed()
     }
 
-    fun clearInk(block: String) {
-        editor.clearInk(block)
-        changed()
-    }
-
-    fun extendInk(block: String) {
-        editor.extendInk(block, 400f)
+    fun clearInk() {
+        editor.clearInk()
         changed()
     }
 
@@ -367,6 +400,7 @@ class EditorState(
         if (on == dark) return
         dark = on
         sync()
+        reloadInk()
     }
 
     /** Stores picture bytes and inserts them; fails for non-pictures. */

@@ -84,7 +84,7 @@ class LibraryState(val lib: SnotLibrary) {
     val newNoteFolder: String?
         get() = (scope as? ScopeArg.Folder)?.id
 
-    fun createNote(handwriting: Boolean): String = lib.createNote(newNoteFolder, handwriting)
+    fun createNote(): String = lib.createNote(newNoteFolder)
 
     private inline fun act(f: () -> Unit) {
         f()

@@ -12,7 +12,7 @@ use std::sync::{Arc, Mutex, MutexGuard};
 use snot_core::doc::Content;
 use snot_core::editor::{Caret, EditSession, Insert};
 use snot_core::ink::{self, Paper, Point, Stroke, Tool};
-use snot_core::{Library, Mark, ParaStyle, Scope, SortBy, color, markdown};
+use snot_core::{Library, Mark, ParaStyle, Scope, SortBy, color, markdown, page};
 
 uniffi::setup_scaffolding!();
 
@@ -276,11 +276,6 @@ pub enum BlockKind {
         aspect: f32,
         caption: String,
     },
-    Ink {
-        height: f32,
-        paper: PaperArg,
-        strokes: i32,
-    },
 }
 
 #[derive(uniffi::Record)]
@@ -312,8 +307,40 @@ pub struct InkPath {
     /// `0xAARRGGBB`, alpha included.
     pub argb: u32,
     pub tool: ToolArg,
-    /// Closed polygon as little-endian `f32` x, y pairs in ink units.
+    /// Closed polygon as little-endian `f32` x, y pairs in page units.
     pub outline: Vec<u8>,
+}
+
+/// The page's fixed geometry, in page units; see `snot_core::page`.
+#[derive(uniffi::Record)]
+pub struct PageMetrics {
+    pub width: f32,
+    pub margin: f32,
+    pub indent: f32,
+    pub prefix: f32,
+    pub checkbox: f32,
+    pub bullet: f32,
+    pub code_pad_x: f32,
+    pub code_pad_y: f32,
+    pub quote_bar: f32,
+    pub quote_gap: f32,
+    pub image_gap: f32,
+    pub caption_size: f32,
+    pub divider_height: f32,
+    pub room: f32,
+    pub paper_spacing: f32,
+    pub line_height: f32,
+}
+
+/// How one paragraph style sets its text, in page units.
+#[derive(uniffi::Record)]
+pub struct TextMetrics {
+    pub size: f32,
+    pub line_height: f32,
+    pub top: f32,
+    pub bottom: f32,
+    pub semibold: bool,
+    pub mono: bool,
 }
 
 #[derive(uniffi::Record)]
@@ -393,15 +420,9 @@ impl SnotLibrary {
             .collect())
     }
 
-    /// Creates a note and returns its id. `handwriting` starts it on a
-    /// blank drawing rather than a line of text.
-    pub fn create_note(&self, folder_id: Option<String>, handwriting: bool) -> Res<String> {
-        let note = if handwriting {
-            self.lib.create_ink_note(folder_id.as_deref())?
-        } else {
-            self.lib.create_note(folder_id.as_deref())?
-        };
-        Ok(note.id)
+    /// Creates a note and returns its id.
+    pub fn create_note(&self, folder_id: Option<String>) -> Res<String> {
+        Ok(self.lib.create_note(folder_id.as_deref())?.id)
     }
 
     pub fn open_note(&self, id: String) -> Res<Arc<NoteEditor>> {
@@ -582,11 +603,6 @@ fn view(s: &EditSession, index: usize, numbers: &[Option<u32>]) -> BlockView {
             aspect: img.aspect,
             caption: img.caption.clone(),
         },
-        Content::Ink(ink) => BlockKind::Ink {
-            height: ink.height,
-            paper: ink.paper.into(),
-            strokes: ink.strokes.len() as i32,
-        },
     };
     BlockView {
         id: block.id.clone(),
@@ -753,10 +769,6 @@ impl NoteEditor {
         self.lock().insert(after.as_deref(), Insert::Divider)
     }
 
-    pub fn insert_ink(&self, after: Option<String>) -> String {
-        self.lock().insert(after.as_deref(), Insert::Ink)
-    }
-
     pub fn insert_image(&self, after: Option<String>, attachment: String, aspect: f32) -> String {
         self.lock()
             .insert(after.as_deref(), Insert::Image { attachment, aspect })
@@ -775,57 +787,74 @@ impl NoteEditor {
     }
 
     /// Adds a stroke from `x, y, pressure` triples of little-endian `f32`
-    /// in ink units.
+    /// in page units, and returns it as it will be painted from now on, so
+    /// the caller can add it to what it shows without re-reading the rest.
     pub fn add_stroke(
         &self,
-        block: String,
         tool: ToolArg,
         color: String,
         width: f32,
         points: Vec<u8>,
-    ) -> bool {
-        let pts = unpack_points(&points);
+        dark: bool,
+    ) -> Option<InkPath> {
+        let stroke = Stroke::new(tool.into(), color, width, &unpack_points(&points));
+        let path = ink_path(&stroke, dark);
+        self.lock().add_stroke(stroke).then_some(path)
+    }
+
+    /// Erases what the eraser touches; returns the positions the erased
+    /// strokes had in [`ink_paths`](Self::ink_paths), in ascending order.
+    pub fn erase(&self, x: f32, y: f32, radius: f32) -> Vec<i32> {
         self.lock()
-            .add_stroke(&block, Stroke::new(tool.into(), color, width, &pts))
+            .erase(x, y, radius)
+            .into_iter()
+            .map(|i| i as i32)
+            .collect()
     }
 
-    pub fn erase(&self, block: String, x: f32, y: f32, radius: f32) -> i32 {
-        self.lock().erase(&block, x, y, radius) as i32
+    pub fn paper(&self) -> PaperArg {
+        self.lock().ink().paper.into()
     }
 
-    pub fn set_paper(&self, block: String, paper: PaperArg) {
-        self.lock().set_paper(&block, paper.into())
+    pub fn set_paper(&self, paper: PaperArg) {
+        self.lock().set_paper(paper.into())
     }
 
-    pub fn clear_ink(&self, block: String) {
-        self.lock().clear_ink(&block)
+    pub fn clear_ink(&self) {
+        self.lock().clear_ink()
     }
 
-    pub fn extend_ink(&self, block: String, by: f32) {
-        self.lock().extend_ink(&block, by)
+    pub fn stroke_count(&self) -> i32 {
+        self.lock().ink().strokes.len() as i32
     }
 
-    /// Every stroke of an ink block as a filled outline, highlighter first
-    /// so it paints underneath.
-    pub fn ink_paths(&self, block: String, dark: bool) -> Vec<InkPath> {
+    /// Changes whenever the handwriting does.
+    pub fn ink_revision(&self) -> i64 {
+        self.lock().ink_revision() as i64
+    }
+
+    /// The lowest point the handwriting reaches, in page units.
+    pub fn ink_bottom(&self) -> f32 {
+        self.lock().ink().content_bottom()
+    }
+
+    /// Every stroke on the page as a filled outline, in the order they were
+    /// written. Paint highlighter strokes first, so they go underneath.
+    pub fn ink_paths(&self, dark: bool) -> Vec<InkPath> {
         let s = self.lock();
-        let Some(ink) = s.ink(&block) else {
-            return Vec::new();
-        };
-        let mut strokes: Vec<&Stroke> = ink
+        s.ink()
             .strokes
             .iter()
-            .filter(|s| s.tool == Tool::Highlighter)
-            .collect();
-        strokes.extend(ink.strokes.iter().filter(|s| s.tool != Tool::Highlighter));
-        strokes
-            .into_iter()
-            .map(|st| InkPath {
-                argb: with_alpha(color::ink(&st.color, dark), st.tool.alpha()),
-                tool: st.tool.into(),
-                outline: pack(&st.outline()),
-            })
+            .map(|st| ink_path(st, dark))
             .collect()
+    }
+}
+
+fn ink_path(st: &Stroke, dark: bool) -> InkPath {
+    InkPath {
+        argb: with_alpha(color::ink(&st.color, dark), st.tool.alpha()),
+        tool: st.tool.into(),
+        outline: pack(&st.outline()),
     }
 }
 
@@ -874,11 +903,36 @@ pub fn note_colors() -> Vec<String> {
 }
 
 #[uniffi::export]
-pub fn ink_width() -> f32 {
-    ink::INK_WIDTH
+pub fn page_metrics() -> PageMetrics {
+    PageMetrics {
+        width: page::PAGE_WIDTH,
+        margin: page::MARGIN,
+        indent: page::INDENT,
+        prefix: page::PREFIX,
+        checkbox: page::CHECKBOX,
+        bullet: page::BULLET,
+        code_pad_x: page::CODE_PAD_X,
+        code_pad_y: page::CODE_PAD_Y,
+        quote_bar: page::QUOTE_BAR,
+        quote_gap: page::QUOTE_GAP,
+        image_gap: page::IMAGE_GAP,
+        caption_size: page::CAPTION_SIZE,
+        divider_height: page::DIVIDER_HEIGHT,
+        room: page::ROOM,
+        paper_spacing: page::PAPER_SPACING,
+        line_height: page::LINE_HEIGHT,
+    }
 }
 
 #[uniffi::export]
-pub fn paper_spacing() -> f32 {
-    ink::PAPER_SPACING
+pub fn text_metrics(style: StyleArg) -> TextMetrics {
+    let m = page::text_metrics(style.into());
+    TextMetrics {
+        size: m.size,
+        line_height: m.line_height,
+        top: m.top,
+        bottom: m.bottom,
+        semibold: m.semibold,
+        mono: m.mono,
+    }
 }

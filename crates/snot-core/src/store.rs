@@ -14,9 +14,8 @@ use std::sync::{Mutex, MutexGuard};
 use rusqlite::{Connection, OptionalExtension, Row, params};
 use sha2::{Digest, Sha256};
 
-use crate::doc::{Block, Content, Doc};
+use crate::doc::Doc;
 use crate::error::{Error, Result};
-use crate::ink::InkBlock;
 use crate::note::{
     Counts, Folder, HIT_END, HIT_START, Millis, Note, NoteSummary, Scope, SortBy, display_title,
     now_ms, preview,
@@ -284,18 +283,6 @@ impl Library {
 
     pub fn create_note(&self, folder_id: Option<&str>) -> Result<Note> {
         self.insert_note(folder_id, String::new(), Doc::new())
-    }
-
-    /// A note that opens on a blank page of handwriting.
-    pub fn create_ink_note(&self, folder_id: Option<&str>) -> Result<Note> {
-        let mut doc = Doc {
-            blocks: vec![Block {
-                id: crate::doc::new_block_id(),
-                content: Content::Ink(InkBlock::default().into()),
-            }],
-        };
-        doc.sanitize();
-        self.insert_note(folder_id, String::new(), doc)
     }
 
     pub(crate) fn insert_note(

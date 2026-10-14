@@ -5204,8 +5204,10 @@ dependencies = [
  "dirs",
  "gpui",
  "gpui_platform",
+ "image",
  "smallvec",
  "snot-core",
+ "tiny-skia",
  "unicode-segmentation",
 ]
 

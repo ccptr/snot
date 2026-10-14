@@ -86,7 +86,7 @@ private fun App(library: LibraryState) {
             }
 
             override fun create(handwriting: Boolean) {
-                val id = library.createNote(handwriting)
+                val id = library.createNote()
                 fresh = id
                 freshInk = handwriting
                 open = id

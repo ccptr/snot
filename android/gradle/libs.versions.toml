@@ -6,6 +6,7 @@ coreKtx = "1.19.0"
 lifecycle = "2.10.0"
 activityCompose = "1.12.0"
 jna = "5.17.0"
+graphicsCore = "1.0.4"
 
 [libraries]
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
@@ -15,6 +16,7 @@ androidx-compose-bom = { group = "androidx.compose", name = "compose-bom", versi
 androidx-compose-ui = { group = "androidx.compose.ui", name = "ui" }
 androidx-compose-foundation = { group = "androidx.compose.foundation", name = "foundation" }
 androidx-compose-material3 = { group = "androidx.compose.material3", name = "material3" }
+androidx-graphics-core = { group = "androidx.graphics", name = "graphics-core", version.ref = "graphicsCore" }
 jna = { group = "net.java.dev.jna", name = "jna", version.ref = "jna" }
 
 [plugins]

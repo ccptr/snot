@@ -15,12 +15,13 @@ use crate::store::Library;
 /// A note rendered as Markdown, plus the files it links to.
 pub struct Exported {
     pub markdown: String,
-    /// `(relative path, bytes)` for each picture and drawing.
+    /// `(relative path, bytes)` for each picture and the handwriting.
     pub files: Vec<(String, Vec<u8>)>,
 }
 
-/// Renders a note as Markdown. Drawings become SVG files and pictures are
-/// copied out, both under `assets_dir` (a path relative to the Markdown).
+/// Renders a note as Markdown. Handwriting becomes an SVG file and pictures
+/// are copied out, both under `assets_dir` (a path relative to the
+/// Markdown).
 pub fn export(note: &Note, lib: &Library, assets_dir: &str) -> Exported {
     let mut md = String::new();
     let mut files = Vec::new();
@@ -80,15 +81,14 @@ pub fn export(note: &Note, lib: &Library, assets_dir: &str) -> Exported {
                 ));
                 files.push((path, bytes));
             }
-            Content::Ink(ink) => {
-                if ink.strokes.is_empty() {
-                    continue;
-                }
-                let path = format!("{assets_dir}/drawing-{}.svg", block.id);
-                md.push_str(&format!("![drawing]({})\n", path.replace(' ', "%20")));
-                files.push((path, ink.to_svg(false).into_bytes()));
-            }
         }
+    }
+    // Markdown has no layer to lay handwriting over the text, so the page's
+    // handwriting follows it as one picture.
+    if note.doc.has_ink() {
+        let path = format!("{assets_dir}/handwriting.svg");
+        md.push_str(&format!("\n![handwriting]({})\n", path.replace(' ', "%20")));
+        files.push((path, note.doc.ink.to_svg(false).into_bytes()));
     }
     Exported {
         markdown: md,
@@ -174,7 +174,7 @@ pub fn import(md: &str, base: Option<&Path>, lib: Option<&Library>) -> (String, 
         title = t.text.clone();
         blocks.remove(0);
     }
-    let mut doc = Doc { blocks };
+    let mut doc = Doc::of(blocks);
     doc.sanitize();
     (title, doc)
 }

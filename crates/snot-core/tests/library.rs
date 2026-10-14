@@ -1,4 +1,4 @@
-use snot_core::doc::{Block, Content, Doc, Mark, ParaStyle};
+use snot_core::doc::{Block, Doc, Mark, ParaStyle};
 use snot_core::editor::{EditSession, Insert};
 use snot_core::ink::{Point, Stroke, Tool};
 use snot_core::note::HIT_START;
@@ -12,9 +12,7 @@ fn open() -> (tempfile::TempDir, Library) {
 
 fn write(lib: &Library, title: &str, lines: &[&str]) -> String {
     let note = lib.create_note(None).unwrap();
-    let doc = Doc {
-        blocks: lines.iter().map(|l| Block::text(*l)).collect(),
-    };
+    let doc = Doc::of(lines.iter().map(|l| Block::text(*l)).collect());
     lib.save_content(&note.id, title, &doc).unwrap();
     note.id
 }
@@ -60,37 +58,30 @@ fn notes_round_trip_through_the_database() {
     s.set_style(&next.block, ParaStyle::Checklist);
     s.set_text(&next.block, "apples", None);
     s.toggle_checked(&next.block);
-    let ink = s.insert(Some(&next.block), Insert::Ink);
-    s.add_stroke(
-        &ink,
-        Stroke::new(
-            Tool::Pen,
-            "red",
-            3.0,
-            &[
-                Point {
-                    x: 1.0,
-                    y: 2.0,
-                    pressure: 0.3,
-                },
-                Point {
-                    x: 50.0,
-                    y: 60.0,
-                    pressure: 0.9,
-                },
-            ],
-        ),
-    );
+    s.add_stroke(Stroke::new(
+        Tool::Pen,
+        "red",
+        3.0,
+        &[
+            Point {
+                x: 1.0,
+                y: 2.0,
+                pressure: 0.3,
+            },
+            Point {
+                x: 50.0,
+                y: 60.0,
+                pressure: 0.9,
+            },
+        ],
+    ));
     lib.save_content(&s.note().id, s.title(), s.doc()).unwrap();
 
     let back = lib.note(&s.note().id).unwrap();
     assert_eq!(back.doc.blocks.len(), s.doc().blocks.len());
     assert_eq!(back.doc.blocks[0], s.doc().blocks[0]);
     assert_eq!(back.doc.blocks[1], s.doc().blocks[1]);
-    let Content::Ink(ink) = &back.doc.blocks[2].content else {
-        panic!("not ink")
-    };
-    assert_eq!(ink.strokes[0].points.len(), 2);
+    assert_eq!(back.doc.ink.strokes[0].points.len(), 2);
     let summary = lib
         .notes(&Scope::All, SortBy::Modified)
         .unwrap()
@@ -234,27 +225,23 @@ fn markdown_export_and_import_round_trip() {
     s.set_style(&b1, ParaStyle::Checklist);
     s.set_text(&b1, "first", None);
     s.toggle_checked(&b1);
-    let ink = s.insert(Some(&b1), Insert::Ink);
-    s.add_stroke(
-        &ink,
-        Stroke::new(
-            Tool::Pen,
-            "ink",
-            3.0,
-            &[
-                Point {
-                    x: 1.0,
-                    y: 2.0,
-                    pressure: 0.5,
-                },
-                Point {
-                    x: 30.0,
-                    y: 40.0,
-                    pressure: 0.5,
-                },
-            ],
-        ),
-    );
+    s.add_stroke(Stroke::new(
+        Tool::Pen,
+        "ink",
+        3.0,
+        &[
+            Point {
+                x: 1.0,
+                y: 2.0,
+                pressure: 0.5,
+            },
+            Point {
+                x: 30.0,
+                y: 40.0,
+                pressure: 0.5,
+            },
+        ],
+    ));
     lib.save_content(&s.note().id, s.title(), s.doc()).unwrap();
 
     let out = dir.path().join("export");
@@ -263,7 +250,10 @@ fn markdown_export_and_import_round_trip() {
     assert!(md.starts_with("# Plans\n"), "{md}");
     assert!(md.contains("Do **it** now"));
     assert!(md.contains("- [x] first"));
-    assert!(md.contains("![drawing](Plans.assets/drawing-"));
+    assert!(
+        md.trim_end()
+            .ends_with("![handwriting](Plans.assets/handwriting.svg)")
+    );
     assert!(out.join("Plans.assets").read_dir().unwrap().count() == 1);
 
     let back = lib.import_markdown(&md_path, None).unwrap();
@@ -271,9 +261,9 @@ fn markdown_export_and_import_round_trip() {
     let t = back.doc.blocks[0].as_text().unwrap();
     assert_eq!(t.text, "Do it now");
     assert_eq!(t.spans[0].mark, Mark::Bold);
-    // The drawing comes back as a picture of itself only if SVG were
+    // The handwriting comes back as a picture of itself only if SVG were
     // accepted; it is not, so it must at least leave a visible trace.
-    assert!(back.doc.plain_text().contains("drawing"));
+    assert!(back.doc.plain_text().contains("handwriting"));
 }
 
 #[test]

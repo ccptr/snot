@@ -1,16 +1,17 @@
-//! Drawing tools: the stroke being written, the eraser, and a cache of
-//! finished stroke outlines so a page of handwriting is not re-outlined on
-//! every frame.
+//! Handwriting on the page: the stroke being written and the eraser. The
+//! finished strokes are drawn into tiles, in [`super::tiles`], so a frame
+//! draws one stroke as a shape however much is already on the page.
 
 use std::cell::RefCell;
-use std::collections::HashMap;
 use std::rc::Rc;
 
-use gpui::{Bounds, Hsla, PathBuilder, Pixels, Point, Window, point, px};
+use gpui::{Bounds, Hsla, Path, PathBuilder, Pixels, Point, Window, point, px};
 use snot_core::editor::EditSession;
-use snot_core::ink::{self, INK_WIDTH, PAPER_SPACING};
-use snot_core::{InkBlock, Paper, Stroke, Tool, color};
+use snot_core::ink;
+use snot_core::page::PAPER_SPACING;
+use snot_core::{Paper, Stroke, Tool, color};
 
+use super::tiles::{Layer, Tiles};
 use crate::theme::{Theme, argb};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -36,7 +37,7 @@ impl InkTool {
         self != InkTool::Type
     }
 
-    /// Nib sizes offered for the tool, in ink units.
+    /// Nib sizes offered for the tool, in page units.
     pub fn widths(self) -> &'static [f32] {
         match self {
             InkTool::Pen => &[2.0, 4.0, 7.0, 12.0],
@@ -65,29 +66,28 @@ fn slot(tool: InkTool) -> usize {
 }
 
 pub struct Live {
-    pub block: String,
     pub tool: Tool,
     pub color: String,
     pub width: f32,
     pub points: Vec<ink::Point>,
 }
 
+/// The stroke being written, ready to paint: tessellated in pixels from
+/// the page's top left.
 pub struct Painted {
-    pub color: Hsla,
-    pub outline: Vec<[f32; 2]>,
+    path: Option<Path<Pixels>>,
+    color: Hsla,
+    layer: Layer,
 }
-
-/// Outlines of a block's strokes, keyed by its revision and the theme.
-type Cached = (u64, bool, Rc<Vec<Painted>>);
 
 pub struct InkState {
     pub pens: Pens,
     pub live: Option<Live>,
-    /// The block an eraser swipe is working on.
-    pub erasing: Option<String>,
+    /// An eraser swipe is under way.
+    pub erasing: bool,
     /// Where the eraser is, for its outline, in window pixels.
     pub eraser_at: Option<Point<Pixels>>,
-    cache: RefCell<HashMap<String, Cached>>,
+    pub tiles: Rc<RefCell<Tiles>>,
 }
 
 impl Default for InkState {
@@ -98,9 +98,9 @@ impl Default for InkState {
                 width: [4.0, 9.0, 28.0, 16.0],
             },
             live: None,
-            erasing: None,
+            erasing: false,
             eraser_at: None,
-            cache: RefCell::default(),
+            tiles: Rc::default(),
         }
     }
 }
@@ -122,19 +122,17 @@ impl InkState {
         self.pens.width[slot(tool)] = w;
     }
 
-    pub fn begin(&mut self, block: &str, tool: InkTool, at: [f32; 2]) {
-        let p = ink::Point {
-            x: at[0],
-            y: at[1],
-            pressure: 0.5,
-        };
+    pub fn begin(&mut self, tool: InkTool, at: [f32; 2]) {
         if let Some(t) = tool.stroke_tool() {
             self.live = Some(Live {
-                block: block.into(),
                 tool: t,
                 color: self.color(tool).to_string(),
                 width: self.width(tool),
-                points: vec![p],
+                points: vec![ink::Point {
+                    x: at[0],
+                    y: at[1],
+                    pressure: 0.5,
+                }],
             });
         }
     }
@@ -154,138 +152,118 @@ impl InkState {
     /// Ends whatever gesture is under way. True when the note changed.
     pub fn finish(&mut self, session: &mut EditSession) -> bool {
         self.eraser_at = None;
-        if self.erasing.take().is_some() {
+        if std::mem::take(&mut self.erasing) {
             session.end_gesture();
             return false;
         }
         let Some(live) = self.live.take() else {
             return false;
         };
-        let stroke = Stroke::new(live.tool, live.color, live.width, &live.points);
-        session.add_stroke(&live.block, stroke)
+        session.add_stroke(Stroke::new(live.tool, live.color, live.width, &live.points))
     }
 
-    /// Outlines of a block's finished strokes, highlighter first, in the
-    /// order they are painted.
-    pub fn painted(
-        &self,
-        id: &str,
-        revision: u64,
-        block: &InkBlock,
-        dark: bool,
-    ) -> Rc<Vec<Painted>> {
-        let mut cache = self.cache.borrow_mut();
-        if let Some((rev, d, p)) = cache.get(id)
-            && *rev == revision
-            && *d == dark
-        {
-            return p.clone();
-        }
-        let ordered = block
-            .strokes
-            .iter()
-            .filter(|s| s.tool == Tool::Highlighter)
-            .chain(block.strokes.iter().filter(|s| s.tool != Tool::Highlighter));
-        let painted: Vec<Painted> = ordered
-            .map(|s| paint_of(s.tool, &s.color, s.outline(), dark))
-            .collect();
-        let painted = Rc::new(painted);
-        cache.insert(id.to_string(), (revision, dark, painted.clone()));
-        painted
-    }
-
-    pub fn live_painted(&self, id: &str, dark: bool) -> Option<Painted> {
-        let live = self.live.as_ref().filter(|l| l.block == id)?;
-        Some(paint_of(
+    /// The stroke being written, outlined and placed for this frame.
+    pub fn live_painted(&self, scale: f32, dark: bool) -> Option<Painted> {
+        let live = self.live.as_ref()?;
+        Some(painted(
+            &ink::outline(&live.points, live.tool, live.width),
             live.tool,
             &live.color,
-            ink::outline(&live.points, live.tool, live.width),
+            scale,
             dark,
         ))
     }
 }
 
-fn paint_of(tool: Tool, token: &str, outline: Vec<[f32; 2]>, dark: bool) -> Painted {
-    let color = argb(color::ink(token, dark)).opacity(tool.alpha());
-    Painted { color, outline }
+fn painted(outline: &[[f32; 2]], tool: Tool, token: &str, scale: f32, dark: bool) -> Painted {
+    Painted {
+        path: tessellate(outline, scale),
+        color: argb(color::ink(token, dark)).opacity(tool.alpha()),
+        layer: Layer::of(tool),
+    }
 }
 
-/// Window position to ink units inside a block shown at `bounds`.
-pub fn to_ink(bounds: Bounds<Pixels>, pos: Point<Pixels>) -> [f32; 2] {
-    let scale = INK_WIDTH / f32::from(bounds.size.width).max(1.0);
+fn tessellate(outline: &[[f32; 2]], scale: f32) -> Option<Path<Pixels>> {
+    if outline.len() < 3 {
+        return None;
+    }
+    let mut builder =
+        PathBuilder::fill().with_style(gpui::PathStyle::Fill(gpui::FillOptions::non_zero()));
+    for (i, [x, y]) in outline.iter().enumerate() {
+        let pt = point(px(x * scale), px(y * scale));
+        if i == 0 {
+            builder.move_to(pt);
+        } else {
+            builder.line_to(pt);
+        }
+    }
+    builder.close();
+    builder.build().ok()
+}
+
+/// Window position to page units, for a page whose top left is `origin`.
+pub fn to_page(origin: Point<Pixels>, scale: f32, pos: Point<Pixels>) -> [f32; 2] {
     [
-        f32::from(pos.x - bounds.left()) * scale,
-        f32::from(pos.y - bounds.top()) * scale,
+        f32::from(pos.x - origin.x) / scale,
+        f32::from(pos.y - origin.y) / scale,
     ]
 }
 
-pub fn scale(bounds: Bounds<Pixels>) -> f32 {
-    f32::from(bounds.size.width) / INK_WIDTH
-}
-
-/// Paints a block: its paper, then its strokes, then the live stroke.
-pub fn paint(
-    bounds: Bounds<Pixels>,
-    block: &InkBlock,
-    painted: &[Painted],
-    live: Option<&Painted>,
+/// Paints the paper over the visible part of the page.
+pub fn paint_paper(
+    origin: Point<Pixels>,
+    width: Pixels,
+    scale: f32,
+    paper: Paper,
     theme: &Theme,
     window: &mut Window,
 ) {
-    let s = scale(bounds);
-    let origin = bounds.origin;
+    if paper == Paper::Plain {
+        return;
+    }
+    let visible = window.content_mask().bounds;
     let rule = theme.paper_rule;
-    let step = PAPER_SPACING * s;
-    match block.paper {
+    let step = PAPER_SPACING * scale;
+    // Rows from the first one in view to the last.
+    let first = ((f32::from(visible.top() - origin.y) / step).floor()).max(1.0);
+    let last = (f32::from(visible.bottom() - origin.y) / step).ceil();
+    let row = |i: f32| origin.y + px(i * step);
+    let mut i = first;
+    match paper {
         Paper::Plain => {}
-        Paper::Lined => {
-            let mut y = step * 2.0;
-            while y < f32::from(bounds.size.height) {
+        Paper::Lined | Paper::Grid => {
+            while i <= last {
                 window.paint_quad(gpui::fill(
-                    Bounds::new(
-                        point(origin.x, origin.y + px(y)),
-                        gpui::size(bounds.size.width, px(1.)),
-                    ),
+                    Bounds::new(point(origin.x, row(i)), gpui::size(width, px(1.))),
                     rule,
                 ));
-                y += step;
+                i += 1.0;
             }
-        }
-        Paper::Grid => {
-            let mut y = step;
-            while y < f32::from(bounds.size.height) {
-                window.paint_quad(gpui::fill(
-                    Bounds::new(
-                        point(origin.x, origin.y + px(y)),
-                        gpui::size(bounds.size.width, px(1.)),
-                    ),
-                    rule,
-                ));
-                y += step;
-            }
-            let mut x = step;
-            while x < f32::from(bounds.size.width) {
-                window.paint_quad(gpui::fill(
-                    Bounds::new(
-                        point(origin.x + px(x), origin.y),
-                        gpui::size(px(1.), bounds.size.height),
-                    ),
-                    rule,
-                ));
-                x += step;
+            if paper == Paper::Grid {
+                let top = visible.top().max(origin.y);
+                let mut x = step;
+                while x < f32::from(width) {
+                    window.paint_quad(gpui::fill(
+                        Bounds::new(
+                            point(origin.x + px(x), top),
+                            gpui::size(px(1.), visible.bottom() - top),
+                        ),
+                        rule,
+                    ));
+                    x += step;
+                }
             }
         }
         Paper::Dotted => {
             let dot = rule.opacity(rule.a * 2.5);
-            let r = (1.6 * s).max(1.2);
-            let mut y = step;
-            while y < f32::from(bounds.size.height) {
+            let r = (1.6 * scale).max(1.2);
+            while i <= last {
                 let mut x = step;
-                while x < f32::from(bounds.size.width) {
+                while x < f32::from(width) {
                     window.paint_quad(
                         gpui::fill(
                             Bounds::new(
-                                point(origin.x + px(x - r), origin.y + px(y - r)),
+                                point(origin.x + px(x - r), row(i) - px(r)),
                                 gpui::size(px(2. * r), px(2. * r)),
                             ),
                             dot,
@@ -294,31 +272,31 @@ pub fn paint(
                     );
                     x += step;
                 }
-                y += step;
+                i += 1.0;
             }
         }
     }
-    for p in painted.iter().chain(live) {
-        fill_outline(origin, s, p, window);
-    }
 }
 
-fn fill_outline(origin: Point<Pixels>, s: f32, p: &Painted, window: &mut Window) {
-    if p.outline.len() < 3 {
-        return;
-    }
-    let mut builder =
-        PathBuilder::fill().with_style(gpui::PathStyle::Fill(gpui::FillOptions::non_zero()));
-    for (i, [x, y]) in p.outline.iter().enumerate() {
-        let pt = point(origin.x + px(x * s), origin.y + px(y * s));
-        if i == 0 {
-            builder.move_to(pt);
-        } else {
-            builder.line_to(pt);
+/// Paints the handwriting in view: the highlighter, then the rest, each
+/// with the stroke being written among them if it belongs there.
+pub fn paint_ink(
+    origin: Point<Pixels>,
+    tiles: &mut Tiles,
+    live: Option<Painted>,
+    window: &mut Window,
+) {
+    let mut live = live;
+    for layer in [Layer::Under, Layer::Over] {
+        tiles.paint(layer, origin, window);
+        if let Some(p) = live.take_if(|p| p.layer == layer)
+            && let Some(mut path) = p.path
+        {
+            path.bounds.origin += origin;
+            for v in &mut path.vertices {
+                v.xy_position += origin;
+            }
+            window.paint_path(path, p.color);
         }
-    }
-    builder.close();
-    if let Ok(path) = builder.build() {
-        window.paint_path(path, p.color);
     }
 }

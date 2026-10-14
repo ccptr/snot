@@ -1,16 +1,19 @@
 //! Drawing the note: toolbar, title, and each block.
 
+use std::cell::Cell;
 use std::ops::Range;
+use std::rc::Rc;
 
 use gpui::{
-    AnyElement, Bounds, Context, CursorStyle, ElementInputHandler, ExternalPaths, Font, FontStyle,
-    FontWeight, Hsla, InteractiveElement, IntoElement, MouseButton, MouseDownEvent, MouseMoveEvent,
-    ParentElement, PathPromptOptions, Pixels, Render, StatefulInteractiveElement,
-    StrikethroughStyle, Styled, StyledText, TextLayout, TextRun, UnderlineStyle, Window, canvas,
-    div, img, point, prelude::FluentBuilder, px, size,
+    AnyElement, AppContext, Bounds, Context, CursorStyle, ElementInputHandler, Entity,
+    ExternalPaths, Font, FontStyle, FontWeight, Hsla, InteractiveElement, IntoElement, MouseButton,
+    MouseDownEvent, MouseMoveEvent, ParentElement, PathPromptOptions, Pixels, Render, ScrollHandle,
+    StatefulInteractiveElement, StrikethroughStyle, Styled, StyledText, Subscription, TextLayout,
+    TextRun, UnderlineStyle, WeakEntity, Window, canvas, div, img, point, prelude::FluentBuilder,
+    px, size,
 };
 use snot_core::doc::{Block, Content, TextBlock};
-use snot_core::ink::INK_WIDTH;
+use snot_core::page::{self, PAGE_WIDTH};
 use snot_core::{Mark, Paper, ParaStyle, color};
 
 use super::ink::{self, InkTool};
@@ -19,13 +22,15 @@ use crate::assets::{MONO_FONT, UI_FONT};
 use crate::theme::{Theme, argb};
 use crate::ui::{self, icon, icon_button, menu_item, panel, separator, swatch};
 
-/// Widest the page grows to; wider windows get margins.
-const PAGE_WIDTH: f32 = 780.;
-const PAGE_PAD: f32 = 44.;
-const PREFIX: f32 = 28.;
+/// Pixels per page unit at 100% zoom: body text at 20px.
+const BASE_SCALE: f32 = 0.5;
+/// Space kept either side of the page when the window is narrow.
+const GUTTER: f32 = 16.;
 
+/// A paragraph style's text, in pixels at the page's current zoom.
 struct TextLook {
     size: f32,
+    line_height: f32,
     weight: FontWeight,
     mono: bool,
     color: Hsla,
@@ -33,51 +38,24 @@ struct TextLook {
     bottom: f32,
 }
 
-fn look(tb: &TextBlock, t: &Theme) -> TextLook {
-    let base = TextLook {
-        size: 16.,
-        weight: FontWeight::NORMAL,
-        mono: false,
-        color: t.text,
-        top: 3.,
-        bottom: 3.,
-    };
-    match tb.style {
-        ParaStyle::Heading1 => TextLook {
-            size: 27.,
-            weight: FontWeight::SEMIBOLD,
-            top: 18.,
-            bottom: 6.,
-            ..base
+fn look(tb: &TextBlock, t: &Theme, z: f32) -> TextLook {
+    let m = page::text_metrics(tb.style);
+    TextLook {
+        size: m.size * z,
+        line_height: (m.line_height * z).round(),
+        weight: if m.semibold {
+            FontWeight::SEMIBOLD
+        } else {
+            FontWeight::NORMAL
         },
-        ParaStyle::Heading2 => TextLook {
-            size: 21.5,
-            weight: FontWeight::SEMIBOLD,
-            top: 14.,
-            bottom: 4.,
-            ..base
+        mono: m.mono,
+        color: match tb.style {
+            ParaStyle::Quote => t.text_muted,
+            ParaStyle::Checklist if tb.checked => t.text_faint,
+            _ => t.text,
         },
-        ParaStyle::Heading3 => TextLook {
-            size: 18.,
-            weight: FontWeight::SEMIBOLD,
-            top: 10.,
-            bottom: 3.,
-            ..base
-        },
-        ParaStyle::Code => TextLook {
-            size: 14.5,
-            mono: true,
-            ..base
-        },
-        ParaStyle::Quote => TextLook {
-            color: t.text_muted,
-            ..base
-        },
-        ParaStyle::Checklist if tb.checked => TextLook {
-            color: t.text_faint,
-            ..base
-        },
-        _ => base,
+        top: m.top * z,
+        bottom: m.bottom * z,
     }
 }
 
@@ -176,7 +154,32 @@ fn text_runs(
     out
 }
 
+thread_local! {
+    /// The zoom chosen with Ctrl+= and Ctrl+-, kept from note to note.
+    static ZOOM: std::cell::Cell<f32> = const { std::cell::Cell::new(1.0) };
+}
+
 impl NoteView {
+    /// Pixels per page unit: the zoom chosen, but never wider than the
+    /// window can show.
+    pub(crate) fn scale(&self) -> f32 {
+        scale_in(&self.scroll)
+    }
+
+    pub(crate) fn zoom_by(&mut self, factor: f32, cx: &mut Context<Self>) {
+        let z = if factor == 0. {
+            1.0
+        } else {
+            (ZOOM.get() * factor).clamp(0.5, 3.0)
+        };
+        ZOOM.set(z);
+        cx.notify();
+    }
+
+    pub(crate) fn to_page(&self, pos: gpui::Point<Pixels>) -> [f32; 2] {
+        ink::to_page(self.geometry.borrow().page, self.scale(), pos)
+    }
+
     fn render_text(
         &self,
         b: &Block,
@@ -186,7 +189,8 @@ impl NoteView {
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let t = self.theme;
-        let l = look(tb, &t);
+        let z = self.scale();
+        let l = look(tb, &t, z);
         let id = b.id.clone();
         let sel = self.sel.as_ref().filter(|s| s.block == id).cloned();
         let marked = sel.as_ref().and(self.marked.clone());
@@ -200,12 +204,18 @@ impl NoteView {
         let prefix: Option<AnyElement> = match tb.style {
             ParaStyle::Bullet => Some(
                 div()
-                    .text_color(t.text_muted)
-                    .child(if tb.indent.is_multiple_of(2) {
-                        "•"
-                    } else {
-                        "◦"
-                    })
+                    .h(px(l.line_height))
+                    .flex()
+                    .items_center()
+                    .child(
+                        div()
+                            .size(px(page::BULLET * z))
+                            .rounded_full()
+                            .when(tb.indent.is_multiple_of(2), |d| d.bg(t.text))
+                            .when(!tb.indent.is_multiple_of(2), |d| {
+                                d.border_1().border_color(t.text)
+                            }),
+                    )
                     .into_any_element(),
             ),
             ParaStyle::Numbered => Some(
@@ -220,9 +230,9 @@ impl NoteView {
                 Some(
                     div()
                         .id(gpui::SharedString::from(format!("check-{id}")))
-                        .mt(px(l.size * 0.75 - 9.))
-                        .size(px(18.))
-                        .rounded(px(5.))
+                        .mt(px((l.line_height - page::CHECKBOX * z) / 2.))
+                        .size(px(page::CHECKBOX * z))
+                        .rounded(px(12. * z))
                         .border_2()
                         .border_color(if checked { t.accent } else { t.text_faint })
                         .when(checked, |d| d.bg(t.accent))
@@ -230,7 +240,7 @@ impl NoteView {
                         .items_center()
                         .justify_center()
                         .cursor_pointer()
-                        .when(checked, |d| d.child(icon("check", 13., t.accent_text)))
+                        .when(checked, |d| d.child(icon("check", 36. * z, t.accent_text)))
                         .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                         .on_click(cx.listener(move |this, _, _, cx| this.toggle_checked(&bid, cx)))
                         .into_any_element(),
@@ -268,40 +278,35 @@ impl NoteView {
             .w_full()
             .pt(px(l.top))
             .pb(px(l.bottom))
-            .pl(px(PREFIX * tb.indent as f32))
+            .pl(px(page::INDENT * z * tb.indent as f32))
             .cursor(CursorStyle::IBeam)
             .text_size(px(l.size))
-            .line_height(px((l.size * 1.5).round()))
+            .line_height(px(l.line_height))
             .font_weight(l.weight)
             .when(l.mono, |d| d.font_family(MONO_FONT))
             .text_color(l.color)
-            .children(prefix.map(|p| {
-                div()
-                    .w(px(PREFIX))
-                    .flex_none()
-                    .flex()
-                    .justify_center()
-                    .child(p)
-            }))
+            .children(prefix.map(|p| div().w(px(page::PREFIX * z)).flex_none().flex().child(p)))
             .child(
                 div()
                     .relative()
                     .flex_1()
                     .min_w_0()
                     .when(is_code, |d| {
-                        d.bg(t.code_bg).rounded(px(6.)).px(px(10.)).py(px(4.))
+                        d.bg(t.code_bg)
+                            .rounded(px(15. * z))
+                            .px(px(page::CODE_PAD_X * z))
+                            .py(px(page::CODE_PAD_Y * z))
                     })
                     .when(is_quote, |d| {
-                        d.border_l_4().border_color(t.quote_bar).pl(px(14.))
+                        d.border_l(px(page::QUOTE_BAR * z))
+                            .border_color(t.quote_bar)
+                            .pl(px(page::QUOTE_GAP * z))
                     })
                     .child(div().relative().w_full().child(styled).child(overlay)),
             )
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(move |this, e: &MouseDownEvent, window, cx| {
-                    if this.tool.draws() {
-                        this.tool = InkTool::Type;
-                    }
                     this.text_mouse_down(
                         &down_id,
                         e.position,
@@ -313,186 +318,6 @@ impl NoteView {
                 }),
             )
             .into_any_element()
-    }
-
-    fn render_ink(
-        &self,
-        b: &Block,
-        block: &snot_core::InkBlock,
-        cx: &mut Context<Self>,
-    ) -> AnyElement {
-        let t = self.theme;
-        let id = b.id.clone();
-        let painted = self
-            .ink
-            .painted(&id, self.session.revision(&id), block, t.dark);
-        let live = self.ink.live_painted(&id, t.dark);
-        let eraser = (self.tool == InkTool::Eraser)
-            .then_some(self.ink.eraser_at)
-            .flatten();
-        let eraser_r = self.ink.width(InkTool::Eraser);
-        let block_c = block.clone();
-        let geometry = self.geometry.clone();
-        let gid = id.clone();
-        let picked = self.picked.as_deref() == Some(&id);
-        let drawing = self.tool.draws();
-        let surface = canvas(
-            move |bounds, _, _| {
-                geometry.borrow_mut().ink.insert(gid, bounds);
-                bounds
-            },
-            move |_, bounds, window, _| {
-                ink::paint(bounds, &block_c, &painted, live.as_ref(), &t, window);
-                if let Some(at) = eraser
-                    && bounds.contains(&at)
-                {
-                    let r = px(eraser_r * ink::scale(bounds));
-                    window.paint_quad(
-                        gpui::outline(
-                            Bounds::new(point(at.x - r, at.y - r), size(r * 2., r * 2.)),
-                            t.text_muted,
-                            gpui::BorderStyle::Solid,
-                        )
-                        .corner_radii(r),
-                    );
-                }
-            },
-        )
-        .w_full()
-        .aspect_ratio(INK_WIDTH / block.height.max(1.));
-
-        let group = gpui::SharedString::from(format!("ink-{id}"));
-        let down_id = id.clone();
-        div()
-            .id(gpui::SharedString::from(id.clone()))
-            .group(group.clone())
-            .relative()
-            .w_full()
-            .my(px(8.))
-            .rounded(px(10.))
-            .border_1()
-            .border_color(if picked { t.accent } else { t.border })
-            .when(picked, |d| d.border_2())
-            .overflow_hidden()
-            .cursor(if drawing {
-                CursorStyle::Crosshair
-            } else {
-                CursorStyle::PointingHand
-            })
-            .child(surface)
-            .child(self.ink_bar(&id, block.paper, picked, group, cx))
-            .on_mouse_down(
-                MouseButton::Left,
-                cx.listener(move |this, e: &MouseDownEvent, window, cx| {
-                    this.ink_mouse_down(&down_id, e.position, window, cx)
-                }),
-            )
-            .into_any_element()
-    }
-
-    fn ink_bar(
-        &self,
-        id: &str,
-        paper: Paper,
-        picked: bool,
-        group: gpui::SharedString,
-        cx: &mut Context<Self>,
-    ) -> impl IntoElement {
-        let t = self.theme;
-        let papers = [
-            (Paper::Plain, "plain", "Plain paper"),
-            (Paper::Lined, "lined", "Lined paper"),
-            (Paper::Grid, "grid", "Grid paper"),
-            (Paper::Dotted, "dotted", "Dotted paper"),
-        ];
-        let mut bar = div()
-            .absolute()
-            .top(px(8.))
-            .right(px(8.))
-            .flex()
-            .gap(px(2.))
-            .p(px(3.))
-            .rounded(px(9.))
-            .bg(t.popover_bg)
-            .border_1()
-            .border_color(t.border)
-            .shadow_md()
-            .cursor(CursorStyle::Arrow)
-            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation());
-        if !picked {
-            bar = bar.invisible().group_hover(group, |s| s.visible());
-        }
-        for (p, name, tip) in papers {
-            let bid = id.to_string();
-            bar = bar.child(
-                icon_button(
-                    gpui::SharedString::from(format!("paper-{name}-{id}")),
-                    name,
-                    tip,
-                    paper == p,
-                    &t,
-                )
-                .on_click(cx.listener(move |this, _, _, cx| this.set_paper(&bid, p, cx))),
-            );
-        }
-        let (a, b, c, d, e) = (
-            id.to_string(),
-            id.to_string(),
-            id.to_string(),
-            id.to_string(),
-            id.to_string(),
-        );
-        bar.child(div().w(px(1.)).my(px(6.)).bg(t.border))
-            .child(
-                icon_button(
-                    gpui::SharedString::from(format!("ink-extend-{id}")),
-                    "expand",
-                    "More room",
-                    false,
-                    &t,
-                )
-                .on_click(cx.listener(move |this, _, _, cx| this.extend_ink(&a, cx))),
-            )
-            .child(
-                icon_button(
-                    gpui::SharedString::from(format!("ink-up-{id}")),
-                    "arrow-up",
-                    "Move up",
-                    false,
-                    &t,
-                )
-                .on_click(cx.listener(move |this, _, _, cx| this.move_block(&b, -1, cx))),
-            )
-            .child(
-                icon_button(
-                    gpui::SharedString::from(format!("ink-down-{id}")),
-                    "arrow-down",
-                    "Move down",
-                    false,
-                    &t,
-                )
-                .on_click(cx.listener(move |this, _, _, cx| this.move_block(&c, 1, cx))),
-            )
-            .child(
-                icon_button(
-                    gpui::SharedString::from(format!("ink-clear-{id}")),
-                    "eraser",
-                    "Erase all",
-                    false,
-                    &t,
-                )
-                .on_click(cx.listener(move |this, _, _, cx| this.clear_ink(&d, cx))),
-            )
-            .child(
-                icon_button(
-                    gpui::SharedString::from(format!("ink-delete-{id}")),
-                    "trash",
-                    "Delete drawing",
-                    false,
-                    &t,
-                )
-                .on_click(cx.listener(move |this, _, _, cx| this.delete_block(&e, cx))),
-            )
     }
 
     fn render_image(
@@ -553,20 +378,21 @@ impl NoteView {
         if !picked {
             bar = bar.invisible().group_hover(group.clone(), |s| s.visible());
         }
+        let z = self.scale();
         div()
             .id(gpui::SharedString::from(id.clone()))
             .group(group)
             .relative()
             .w_full()
-            .my(px(8.))
+            .my(px(page::IMAGE_GAP * z))
             .flex()
             .flex_col()
-            .gap(px(6.))
+            .gap(px(15. * z))
             .cursor_pointer()
             .child(
                 div()
                     .w_full()
-                    .rounded(px(10.))
+                    .rounded(px(20. * z))
                     .overflow_hidden()
                     .border_2()
                     .border_color(if picked {
@@ -582,7 +408,9 @@ impl NoteView {
                         .w_full()
                         .flex()
                         .justify_center()
-                        .text_size(px(13.5))
+                        .text_size(px(page::CAPTION_SIZE * z))
+                        .line_height(px(page::CAPTION_SIZE * page::LINE_HEIGHT * z))
+                        .italic()
                         .text_color(t.text_muted)
                         .child(image.caption.clone()),
                 )
@@ -602,7 +430,7 @@ impl NoteView {
         div()
             .id(gpui::SharedString::from(id.clone()))
             .w_full()
-            .h(px(28.))
+            .h(px(page::DIVIDER_HEIGHT * self.scale()))
             .flex()
             .items_center()
             .cursor_pointer()
@@ -621,82 +449,68 @@ impl NoteView {
 
     // ---- ink input -------------------------------------------------------
 
+    /// The pen, marker, highlighter or eraser touches the page.
     fn ink_mouse_down(
         &mut self,
-        id: &str,
         pos: gpui::Point<Pixels>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         self.popover = None;
-        if !self.tool.draws() {
-            return self.pick(id, window, cx);
-        }
         window.focus(&self.focus, cx);
-        let Some(bounds) = self.geometry.borrow().ink.get(id).copied() else {
-            return;
-        };
         self.picked = None;
-        let at = ink::to_ink(bounds, pos);
+        let at = self.to_page(pos);
         if self.tool == InkTool::Eraser {
-            self.ink.erasing = Some(id.to_string());
+            self.ink.erasing = true;
             self.ink.eraser_at = Some(pos);
-            if self
-                .session
-                .erase(id, at[0], at[1], self.ink.width(InkTool::Eraser))
-                > 0
-            {
-                self.changed(cx);
-            }
+            self.erase_at(at, cx);
         } else {
-            self.ink.begin(id, self.tool, at);
+            self.ink.begin(self.tool, at);
         }
         cx.notify();
     }
 
-    fn mouse_move(&mut self, e: &MouseMoveEvent, _: &mut Window, cx: &mut Context<Self>) {
+    fn ink_mouse_move(&mut self, e: &MouseMoveEvent, _: &mut Window, cx: &mut Context<Self>) {
         let pressed = e.pressed_button == Some(MouseButton::Left);
-        if let Some(block) = self.ink.live.as_ref().map(|l| l.block.clone()) {
+        if self.ink.live.is_some() {
             if !pressed {
                 return self.mouse_up(cx);
             }
-            if let Some(bounds) = self.geometry.borrow().ink.get(&block).copied() {
-                self.ink.extend(ink::to_ink(bounds, e.position));
-            }
+            let at = self.to_page(e.position);
+            self.ink.extend(at);
             cx.notify();
             return;
         }
         if self.tool == InkTool::Eraser {
             self.ink.eraser_at = Some(e.position);
-            let target = self.ink.erasing.clone().filter(|_| pressed);
-            let bounds = target
-                .as_ref()
-                .and_then(|b| self.geometry.borrow().ink.get(b).copied());
-            if let (Some(block), Some(bounds)) = (target, bounds) {
-                let at = ink::to_ink(bounds, e.position);
-                if self
-                    .session
-                    .erase(&block, at[0], at[1], self.ink.width(InkTool::Eraser))
-                    > 0
-                {
-                    self.changed(cx);
-                }
+            if self.ink.erasing && pressed {
+                let at = self.to_page(e.position);
+                self.erase_at(at, cx);
             }
             cx.notify();
-            return;
         }
-        if pressed {
+    }
+
+    fn erase_at(&mut self, at: [f32; 2], cx: &mut Context<Self>) {
+        let r = self.ink.width(InkTool::Eraser);
+        if !self.session.erase(at[0], at[1], r).is_empty() {
+            self.changed(cx);
+        }
+    }
+
+    fn mouse_move(&mut self, e: &MouseMoveEvent, _: &mut Window, cx: &mut Context<Self>) {
+        if e.pressed_button == Some(MouseButton::Left) {
             self.text_mouse_drag(e.position, cx);
         }
     }
 
-    /// Choosing a pen in a note with nowhere to draw adds a drawing.
-    pub fn set_tool(&mut self, tool: InkTool, window: &mut Window, cx: &mut Context<Self>) {
+    pub fn set_tool(&mut self, tool: InkTool, _: &mut Window, cx: &mut Context<Self>) {
         self.popover = None;
-        if tool.draws() && tool != InkTool::Eraser && !self.session.doc().has_ink() {
-            self.insert_drawing(window, cx);
-        }
         self.tool = tool;
+        if tool.draws() {
+            // The keyboard goes nowhere while drawing.
+            self.sel = None;
+        }
         cx.notify();
     }
 
@@ -877,6 +691,29 @@ impl NoteView {
                         })),
                 );
             }
+            bar = bar.child(vsep(&t));
+            let paper = self.session.ink().paper;
+            for (p, name, tip) in [
+                (Paper::Plain, "plain", "Plain paper"),
+                (Paper::Lined, "lined", "Lined paper"),
+                (Paper::Grid, "grid", "Grid paper"),
+                (Paper::Dotted, "dotted", "Dotted paper"),
+            ] {
+                bar = bar.child(
+                    icon_button(
+                        gpui::SharedString::from(format!("paper-{name}")),
+                        name,
+                        tip,
+                        paper == p,
+                        &t,
+                    )
+                    .on_click(cx.listener(move |this, _, _, cx| this.set_paper(p, cx))),
+                );
+            }
+            bar = bar.child(
+                icon_button("ink-clear", "trash", "Erase all writing", false, &t)
+                    .on_click(cx.listener(|this, _, _, cx| this.clear_ink(cx))),
+            );
         } else {
             let marks = self.active_marks();
             let has = |m: &Mark| marks.contains(m);
@@ -1189,14 +1026,6 @@ impl NoteView {
                 let close = |this: &mut Self| this.popover = None;
                 p = p
                     .child(
-                        menu_item("insert-drawing", Some("drawing"), "Drawing", &t).on_click(
-                            cx.listener(move |this, _, window, cx| {
-                                close(this);
-                                this.insert_drawing(window, cx)
-                            }),
-                        ),
-                    )
-                    .child(
                         menu_item("insert-image", Some("image"), "Picture…", &t).on_click(
                             cx.listener(move |this, _, window, cx| {
                                 close(this);
@@ -1367,20 +1196,207 @@ fn paint_selection(
     }
 }
 
-impl Render for NoteView {
+/// What the blocks show, besides their text. While neither changes the
+/// blocks are not laid out again.
+#[derive(Clone, PartialEq)]
+struct BlocksKey {
+    revision: u64,
+    sel: Option<Selection>,
+    marked: Option<Range<usize>>,
+    picked: Option<String>,
+    focused: bool,
+    dark: bool,
+    scale: f32,
+}
+
+/// The blocks of the note as a view of their own. GPUI keeps a view's last
+/// frame until the view is notified, and this one is only notified when
+/// what it shows has changed, so moving the pen repaints the handwriting
+/// alone: a stroke over a long note costs the same as one over an empty
+/// page.
+pub(crate) struct Blocks {
+    note: WeakEntity<NoteView>,
+    key: Option<BlocksKey>,
+    _sub: Subscription,
+}
+
+impl Blocks {
+    fn new(note: &Entity<NoteView>, window: &mut Window, cx: &mut Context<Self>) -> Self {
+        Blocks {
+            note: note.downgrade(),
+            key: None,
+            _sub: cx.observe_in(note, window, |this, note, window, cx| {
+                if this.key.as_ref() != Some(&note.read(cx).blocks_key(window)) {
+                    cx.notify();
+                }
+            }),
+        }
+    }
+}
+
+impl Render for Blocks {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let t = self.theme;
+        let Ok((key, el)) = self.note.update(cx, |note, cx| {
+            (note.blocks_key(window), note.render_blocks(window, cx))
+        }) else {
+            return div().into_any_element();
+        };
+        self.key = Some(key);
+        el
+    }
+}
+
+impl NoteView {
+    fn blocks_key(&self, window: &Window) -> BlocksKey {
+        BlocksKey {
+            revision: self.session.blocks_revision(),
+            sel: self.sel.clone(),
+            marked: self.marked.clone(),
+            picked: self.picked.clone(),
+            focused: self.focus.is_focused(window),
+            dark: self.theme.dark,
+            scale: self.scale(),
+        }
+    }
+
+    fn render_blocks(&self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         {
             let mut g = self.geometry.borrow_mut();
             g.ready.clear();
             g.text.clear();
+            g.rects.clear();
         }
         let focused = self.focus.is_focused(window);
         let numbers = self.session.doc().list_numbers();
         let blocks = self.session.doc().blocks.clone();
-        let page = self.page_color();
+        let z = self.scale();
+        let page_w = px(PAGE_WIDTH * z);
 
         let mut items: Vec<AnyElement> = Vec::with_capacity(blocks.len() + 2);
+        let (geometry, scroll) = (self.geometry.clone(), self.scroll.clone());
+        let top = Rc::new(Cell::new(px(0.)));
+        let start = top.clone();
+        items.push(
+            canvas(move |b, _, _| start.set(b.top()), |_, _, _, _| {})
+                .h(px(0.))
+                .into_any_element(),
+        );
+        for (i, b) in blocks.iter().enumerate() {
+            let el = match &b.content {
+                Content::Text(tb) => {
+                    self.render_text(b, tb, numbers.get(i).copied().flatten(), focused, cx)
+                }
+                Content::Image(im) => self.render_image(b, im, cx),
+                Content::Divider => self.render_divider(b, cx),
+            };
+            let (geometry, scroll, id) = (geometry.clone(), scroll.clone(), b.id.clone());
+            let record = canvas(
+                move |b, _, _| {
+                    let content = scroll.bounds().top() + scroll.offset().y;
+                    geometry
+                        .borrow_mut()
+                        .rects
+                        .insert(id, (b.top() - content, b.bottom() - content));
+                },
+                |_, _, _, _| {},
+            )
+            .absolute()
+            .top_0()
+            .left_0()
+            .size_full();
+            items.push(
+                column(page_w, z)
+                    .relative()
+                    .child(el)
+                    .child(record)
+                    .into_any_element(),
+            );
+        }
+        // Once all are laid out: their height, for the room left for them,
+        // and whether the block to reveal is in view.
+        let note = cx.weak_entity();
+        items.push(
+            canvas(
+                move |b, window, _| {
+                    let mut g = geometry.borrow_mut();
+                    let height = b.top() - top.get();
+                    let mut again = g.blocks_height != height;
+                    g.blocks_height = height;
+                    if let Some(id) = g.recheck.take()
+                        && let Some(&rect) = g.rects.get(&id)
+                    {
+                        again |= bring_into_view(&scroll, rect);
+                    }
+                    if again {
+                        window.on_next_frame(move |_, cx| {
+                            note.update(cx, |_, cx| cx.notify()).ok();
+                        });
+                    }
+                },
+                |_, _, _, _| {},
+            )
+            .h(px(0.))
+            .into_any_element(),
+        );
+        div()
+            .w(page_w)
+            .flex()
+            .flex_col()
+            .children(items)
+            .into_any_element()
+    }
+
+    /// Scrolls the block asked for into view, from where it was laid out
+    /// last; the blocks look again once laid out, in case it has moved or
+    /// is new.
+    fn reveal(&self) {
+        let mut g = self.geometry.borrow_mut();
+        g.recheck = g.reveal.take();
+        if let Some(id) = &g.recheck
+            && let Some(&rect) = g.rects.get(id)
+        {
+            bring_into_view(&self.scroll, rect);
+        }
+    }
+}
+
+/// Pixels per page unit for a page shown in `scroll`, as it was last laid
+/// out.
+fn scale_in(scroll: &ScrollHandle) -> f32 {
+    let width = f32::from(scroll.bounds().size.width);
+    let width = if width > 0. { width } else { 900. };
+    let fit = (width - 2. * GUTTER) / PAGE_WIDTH;
+    (BASE_SCALE * ZOOM.get()).min(fit).max(0.1)
+}
+
+/// Scrolls the least distance that shows all of a block, or its top if it
+/// is taller than the view. True when it scrolled.
+fn bring_into_view(scroll: &ScrollHandle, (top, bottom): (Pixels, Pixels)) -> bool {
+    let offset = scroll.offset();
+    let height = scroll.bounds().size.height;
+    let view_top = -offset.y;
+    let to = if top < view_top {
+        top
+    } else if bottom > view_top + height {
+        top.min(bottom - height)
+    } else {
+        return false;
+    };
+    scroll.set_offset(point(offset.x, -to));
+    true
+}
+
+impl Render for NoteView {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let t = self.theme;
+        let page = self.page_color();
+        self.reveal();
+
+        let z = self.scale();
+        let page_w = px(PAGE_WIDTH * z);
+        let column = || column(page_w, z);
+
+        let mut items: Vec<AnyElement> = Vec::with_capacity(5);
         items.push(
             column()
                 .pt(px(36.))
@@ -1408,23 +1424,72 @@ impl Render for NoteView {
                 )
                 .into_any_element(),
         );
-        for (i, b) in blocks.iter().enumerate() {
-            let el = match &b.content {
-                Content::Text(tb) => {
-                    self.render_text(b, tb, numbers.get(i).copied().flatten(), focused, cx)
-                }
-                Content::Ink(ink) => self.render_ink(b, ink, cx),
-                Content::Image(im) => self.render_image(b, im, cx),
-                Content::Divider => self.render_divider(b, cx),
-            };
-            items.push(column().child(el).into_any_element());
-        }
-        // Clicking below the last line puts the caret at its end.
+        // The top of the page: where it starts, and the paper under the
+        // text from there down.
+        let geometry = self.geometry.clone();
+        let paper = self.session.ink().paper;
+        let (scroll, note) = (self.scroll.clone(), cx.weak_entity());
+        items.push(
+            canvas(
+                move |bounds, window, _| {
+                    geometry.borrow_mut().page = bounds.origin;
+                    // The zoom was worked out from the width last laid out;
+                    // if the window has since been resized, lay out again.
+                    if scale_in(&scroll) != z {
+                        window.on_next_frame(move |_, cx| {
+                            note.update(cx, |_, cx| cx.notify()).ok();
+                        });
+                    }
+                },
+                move |bounds, _, window, _| {
+                    ink::paint_paper(bounds.origin, bounds.size.width, z, paper, &t, window)
+                },
+            )
+            .w(page_w)
+            .h(px(0.))
+            .flex_none()
+            .into_any_element(),
+        );
+        let blocks = self
+            .blocks
+            .get_or_insert_with(|| {
+                let note = cx.entity();
+                cx.new(|cx| Blocks::new(&note, window, cx))
+            })
+            .clone();
+        // Laid out at no height, so its place stays put as it grows and it
+        // need not be redone for that; the room it takes is measured the
+        // frame it is laid out, and left for it here.
+        let height = self.geometry.borrow().blocks_height;
+        items.push(
+            div()
+                .w(page_w)
+                .h(height)
+                .flex_none()
+                .child(blocks.cached(gpui::StyleRefinement::default().w(page_w).h(px(0.))))
+                .into_any_element(),
+        );
+        // The page runs on past the last line and the lowest writing, so
+        // there is always room; clicking there types at the end.
+        let (page_top, blocks_bottom) = {
+            let g = self.geometry.borrow();
+            (g.page.y, g.blocks_bottom)
+        };
+        let ink_bottom = self.session.ink().content_bottom() + page::ROOM;
+        let room = (ink_bottom * z - f32::from(blocks_bottom - page_top)).max(page::ROOM * z);
+        let geometry = self.geometry.clone();
         items.push(
             column()
                 .id("note-tail")
-                .h(px(240.))
+                .h(px(room))
                 .cursor(CursorStyle::IBeam)
+                .child(
+                    canvas(
+                        move |bounds, _, _| geometry.borrow_mut().blocks_bottom = bounds.top(),
+                        |_, _, _, _| {},
+                    )
+                    .size_full(),
+                )
                 .on_mouse_down(
                     MouseButton::Left,
                     cx.listener(|this, _, window, cx| {
@@ -1437,7 +1502,6 @@ impl Render for NoteView {
                             .map(|b| b.id.clone());
                         if let Some(id) = last {
                             let len = this.session.text(&id).map(|t| t.text.len()).unwrap_or(0);
-                            this.tool = InkTool::Type;
                             this.sel = Some(Selection::caret(id, len));
                             this.picked = None;
                             window.focus(&this.focus, cx);
@@ -1446,6 +1510,44 @@ impl Render for NoteView {
                     }),
                 )
                 .into_any_element(),
+        );
+        // The handwriting, over everything on the page.
+        self.ink.tiles.borrow_mut().sync(
+            self.session.ink(),
+            self.session.ink_revision(),
+            z * window.scale_factor(),
+            t.dark,
+        );
+        let tiles = self.ink.tiles.clone();
+        let live = self.ink.live_painted(z, t.dark);
+        let eraser = (self.tool == InkTool::Eraser)
+            .then_some(self.ink.eraser_at)
+            .flatten()
+            .map(|at| (at, px(self.ink.width(InkTool::Eraser) * z)));
+        let geometry = self.geometry.clone();
+        items.push(
+            canvas(
+                |_, _, _| {},
+                move |_, _, window, _| {
+                    let origin = geometry.borrow().page;
+                    ink::paint_ink(origin, &mut tiles.borrow_mut(), live, window);
+                    if let Some((at, r)) = eraser {
+                        window.paint_quad(
+                            gpui::outline(
+                                Bounds::new(point(at.x - r, at.y - r), size(r * 2., r * 2.)),
+                                t.text_muted,
+                                gpui::BorderStyle::Solid,
+                            )
+                            .corner_radii(r),
+                        );
+                    }
+                },
+            )
+            .absolute()
+            .top_0()
+            .left_0()
+            .size_full()
+            .into_any_element(),
         );
 
         let entity = cx.entity();
@@ -1518,6 +1620,9 @@ impl Render for NoteView {
             .on_action(cx.listener(Self::checklist))
             .on_action(cx.listener(Self::toggle_check))
             .on_action(cx.listener(Self::escape))
+            .on_action(cx.listener(Self::zoom_in))
+            .on_action(cx.listener(Self::zoom_out))
+            .on_action(cx.listener(Self::zoom_reset))
             .on_mouse_move(cx.listener(Self::mouse_move))
             .on_mouse_up(
                 MouseButton::Left,
@@ -1558,7 +1663,35 @@ impl Render for NoteView {
                             .flex_col()
                             .items_center()
                             .children(items),
-                    ),
+                    )
+                    // A drawing tool takes the mouse everywhere on the page.
+                    .when(!trashed && self.tool.draws(), |d| {
+                        d.child(
+                            div()
+                                .id("ink-input")
+                                .absolute()
+                                .top_0()
+                                .left_0()
+                                .size_full()
+                                .cursor(CursorStyle::Crosshair)
+                                .block_mouse_except_scroll()
+                                .on_mouse_down(
+                                    MouseButton::Left,
+                                    cx.listener(|this, e: &MouseDownEvent, window, cx| {
+                                        this.ink_mouse_down(e.position, window, cx)
+                                    }),
+                                )
+                                .on_mouse_move(cx.listener(Self::ink_mouse_move))
+                                .on_mouse_up(
+                                    MouseButton::Left,
+                                    cx.listener(|this, _, _, cx| this.mouse_up(cx)),
+                                )
+                                .on_mouse_up_out(
+                                    MouseButton::Left,
+                                    cx.listener(|this, _, _, cx| this.mouse_up(cx)),
+                                ),
+                        )
+                    }),
             )
             .children(
                 self.popover
@@ -1567,11 +1700,7 @@ impl Render for NoteView {
     }
 }
 
-/// One row of the page, centred at reading width.
-fn column() -> gpui::Div {
-    div()
-        .w_full()
-        .max_w(px(PAGE_WIDTH))
-        .px(px(PAGE_PAD))
-        .flex_none()
+/// One row of the page: its width, less the margins.
+fn column(width: Pixels, z: f32) -> gpui::Div {
+    div().w(width).px(px(page::MARGIN * z)).flex_none()
 }

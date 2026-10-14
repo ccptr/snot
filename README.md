@@ -5,17 +5,25 @@ of Samsung Notes, with native apps for Linux and Android over one Rust core.
 
 - **Text** with headings, quotes, code, bulleted, numbered and checklists,
   indenting, bold, italic, underline, strikethrough, highlight and text colour.
-- **Handwriting** in drawing blocks anywhere in a note: pen, marker and
-  highlighter in ten colours and several nib sizes, a stroke eraser, and
-  plain, lined, grid or dotted paper. On Android a stylus always draws and
-  fingers draw in pen mode.
-- **Pictures** and dividers between blocks.
+- **Handwriting anywhere on the page**, over and around the text: pen,
+  marker and highlighter in ten colours and several nib sizes, a stroke
+  eraser, and plain, lined, grid or dotted paper. A note is one page of
+  fixed width that zooms rather than reflows, so writing stays where it was
+  put relative to the words on every screen. On Android a stylus always
+  draws and fingers draw in pen mode, with two fingers to scroll.
+- **Low-latency ink.** On Android the stroke being written goes straight
+  to a front-buffered layer (Android 10 and newer) before the app's next
+  frame. On the desktop, finished strokes are kept as tiles of pixels and
+  the note's text and the lists beside it are reused from the last frame,
+  so a moving pen redraws one stroke however long the note is.
+- **Pictures** and dividers between paragraphs.
 - **Organising** with folders, favourites, pinning, note colours, sorting by
   date or title, full-text search with highlighted matches, and a trash that
   keeps deleted notes for 30 days.
 - **Undo and redo** for every edit, and autosave.
 - **Markdown**, so notes are never locked in: export to a folder on the
-  desktop; share as text and import files on Android.
+  desktop, with a note's handwriting as `assets/handwriting.svg`; share as
+  text and import files on Android.
 
 Everything stays on the device, in a library you own: a SQLite database
 plus an attachments folder.
@@ -42,7 +50,8 @@ cargo run --release -p snot-desktop
 
 Notes live in `$XDG_DATA_HOME/snot` (usually `~/.local/share/snot`); set
 `SNOT_LIBRARY` to use another folder. `SNOT_THEME=light` or `dark`
-overrides the system appearance.
+overrides the system appearance. `Ctrl+=` and `Ctrl+-` zoom the page and
+`Ctrl+0` sets it back.
 
 ## Android
 

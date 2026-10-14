@@ -1,10 +1,10 @@
 //! Handwriting: vector strokes, their storage format, and the geometry that
 //! turns them into filled outlines.
 //!
-//! An ink block is a canvas exactly [`INK_WIDTH`] units wide and as tall as
-//! its writing needs. Front-ends scale those units to whatever width they
-//! show the block at, so a page written on a phone reopens on a desktop with
-//! every stroke in the same place relative to the others.
+//! A note's handwriting is one layer over its whole page, in page units
+//! (see [`crate::page`]). Front-ends scale those units to whatever width
+//! they show the page at, so a page written on a phone reopens on a
+//! desktop with every stroke in the same place relative to the text.
 //!
 //! The outline of a stroke — the variable-width shape actually painted — is
 //! computed here and not by each platform, so a note looks the same
@@ -12,33 +12,15 @@
 
 use serde::{Deserialize, Serialize};
 
-/// Width of every ink block, in ink units.
-pub const INK_WIDTH: f32 = 1000.0;
-/// Height a new ink block starts at.
-pub const DEFAULT_INK_HEIGHT: f32 = 700.0;
-/// Writing closer than this to the bottom edge grows the block.
-const GROW_MARGIN: f32 = 160.0;
-const GROW_STEP: f32 = 400.0;
-/// Ruling interval for lined, grid and dotted paper.
-pub const PAPER_SPACING: f32 = 40.0;
+use crate::page::PAGE_WIDTH;
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct InkBlock {
-    pub height: f32,
+/// The handwriting on a page and the paper under it.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct InkLayer {
     #[serde(default)]
     pub paper: Paper,
     #[serde(default)]
     pub strokes: Vec<Stroke>,
-}
-
-impl Default for InkBlock {
-    fn default() -> Self {
-        InkBlock {
-            height: DEFAULT_INK_HEIGHT,
-            paper: Paper::Plain,
-            strokes: Vec::new(),
-        }
-    }
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -116,7 +98,7 @@ impl Stroke {
         let min_step = (width * 0.15).clamp(0.4, 2.0);
         for (i, p) in raw.iter().enumerate() {
             let p = Point {
-                x: p.x.clamp(-50.0, INK_WIDTH + 50.0),
+                x: p.x.clamp(-50.0, PAGE_WIDTH + 50.0),
                 y: p.y.max(-50.0),
                 pressure: p.pressure.clamp(0.0, 1.0),
             };
@@ -173,7 +155,7 @@ impl Stroke {
         }
     }
 
-    /// The filled shape this stroke paints, as a closed polygon in ink
+    /// The filled shape this stroke paints, as a closed polygon in page
     /// units. Fill it with the non-zero rule: a stroke that crosses itself
     /// overlaps its own outline.
     pub fn outline(&self) -> Vec<[f32; 2]> {
@@ -181,28 +163,35 @@ impl Stroke {
     }
 }
 
-impl InkBlock {
-    /// Adds a stroke, growing the canvas when writing nears its foot, the
-    /// way a page of handwriting keeps giving you room.
+impl InkLayer {
+    pub fn is_empty(&self) -> bool {
+        self.strokes.is_empty() && self.paper == Paper::Plain
+    }
+
     pub fn add_stroke(&mut self, stroke: Stroke) {
-        if stroke.points.is_empty() {
-            return;
+        if !stroke.points.is_empty() {
+            self.strokes.push(stroke);
         }
-        let bottom = stroke.bounds().max_y;
-        if bottom > self.height - GROW_MARGIN {
-            self.height = (bottom + GROW_STEP).ceil();
-        }
-        self.strokes.push(stroke);
     }
 
-    /// Removes every stroke the eraser circle touches. Returns how many.
-    pub fn erase_at(&mut self, x: f32, y: f32, radius: f32) -> usize {
-        let before = self.strokes.len();
-        self.strokes.retain(|s| !s.hit(x, y, radius));
-        before - self.strokes.len()
+    /// Removes every stroke the eraser circle touches. Returns where they
+    /// were, in ascending order, so a front-end can drop exactly those
+    /// from what it has on screen.
+    pub fn erase_at(&mut self, x: f32, y: f32, radius: f32) -> Vec<usize> {
+        let mut index = 0;
+        let mut removed = Vec::new();
+        self.strokes.retain(|s| {
+            let hit = s.hit(x, y, radius);
+            if hit {
+                removed.push(index);
+            }
+            index += 1;
+            !hit
+        });
+        removed
     }
 
-    /// Lowest point any stroke reaches, so a canvas can be trimmed.
+    /// Lowest point any stroke reaches; the page is at least this long.
     pub fn content_bottom(&self) -> f32 {
         self.strokes
             .iter()
@@ -210,20 +199,22 @@ impl InkBlock {
             .fold(0.0, f32::max)
     }
 
-    /// The block as a standalone SVG, for export.
-    pub fn to_svg(&self, dark: bool) -> String {
-        use std::fmt::Write;
-        let mut out = format!(
-            "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 {INK_WIDTH} {h}\" width=\"{INK_WIDTH}\" height=\"{h}\">",
-            h = self.height.ceil()
-        );
-        // Highlighter goes under everything else, as it is painted.
-        let ordered = self
-            .strokes
+    /// Strokes in the order they are painted: highlighter under the rest.
+    pub fn painting_order(&self) -> impl Iterator<Item = &Stroke> {
+        self.strokes
             .iter()
             .filter(|s| s.tool == Tool::Highlighter)
-            .chain(self.strokes.iter().filter(|s| s.tool != Tool::Highlighter));
-        for stroke in ordered {
+            .chain(self.strokes.iter().filter(|s| s.tool != Tool::Highlighter))
+    }
+
+    /// The handwriting alone as an SVG the width of the page, for export.
+    pub fn to_svg(&self, dark: bool) -> String {
+        use std::fmt::Write;
+        let h = (self.content_bottom() + 20.0).ceil();
+        let mut out = format!(
+            "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 {PAGE_WIDTH} {h}\" width=\"{PAGE_WIDTH}\" height=\"{h}\">"
+        );
+        for stroke in self.painting_order() {
             let poly = stroke.outline();
             if poly.is_empty() {
                 continue;
@@ -576,7 +567,7 @@ mod tests {
 
     #[test]
     fn eraser_takes_only_what_it_touches() {
-        let mut ink = InkBlock::default();
+        let mut ink = InkLayer::default();
         ink.add_stroke(Stroke::new(Tool::Pen, "ink", 3.0, &line(20, 0.5)));
         ink.add_stroke(Stroke::new(
             Tool::Pen,
@@ -595,34 +586,10 @@ mod tests {
                 },
             ],
         ));
-        assert_eq!(ink.erase_at(300.0, 600.0, 10.0), 0);
-        assert_eq!(ink.erase_at(550.0, 505.0, 6.0), 1);
+        assert!(ink.erase_at(300.0, 600.0, 10.0).is_empty());
+        assert_eq!(ink.erase_at(550.0, 505.0, 6.0), [1]);
         assert_eq!(ink.strokes.len(), 1);
         assert_eq!(ink.strokes[0].color, "ink");
-    }
-
-    #[test]
-    fn writing_near_the_foot_grows_the_page() {
-        let mut ink = InkBlock::default();
-        let h = ink.height;
-        ink.add_stroke(Stroke::new(
-            Tool::Pen,
-            "ink",
-            3.0,
-            &[
-                Point {
-                    x: 10.0,
-                    y: h - 20.0,
-                    pressure: 0.5,
-                },
-                Point {
-                    x: 20.0,
-                    y: h - 10.0,
-                    pressure: 0.5,
-                },
-            ],
-        ));
-        assert!(ink.height > h + 300.0);
     }
 
     #[test]

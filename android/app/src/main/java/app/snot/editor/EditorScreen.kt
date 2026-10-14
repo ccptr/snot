@@ -17,6 +17,7 @@ import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.Row
@@ -48,8 +49,10 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.VerticalDivider
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
@@ -70,7 +73,10 @@ import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.TextRange
@@ -82,6 +88,7 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.unit.sp
 import app.snot.ffi.BlockKind
 import app.snot.ffi.BlockView
@@ -147,42 +154,41 @@ fun EditorScreen(state: EditorState, host: EditorHost) {
             if (state.tool == InkTool.TYPE) {
                 keyboard?.hide()
                 focus.clearFocus()
-                // Drawing happens on a drawing block; start one if the note has none.
-                if (state.blocks.none { it.kind is BlockKind.Ink }) state.insertInk()
                 state.tool = InkTool.PEN
             } else {
                 state.tool = InkTool.TYPE
             }
         }, onSheet = { sheet = it })
         if (state.trashed) TrashBanner(state, host)
-        Column(
-            Modifier
-                .weight(1f)
-                .fillMaxWidth()
-                .verticalScroll(rememberScrollState())
-                .padding(horizontal = 20.dp),
-        ) {
-            TitleField(state)
-            Text(
-                state.info?.let { dateLabel(it.updatedAt) } ?: "",
-                color = c.textFaint,
-                fontSize = 13.sp,
-                modifier = Modifier.padding(top = 2.dp, bottom = 14.dp),
-            )
-            for (b in state.blocks) {
-                androidx.compose.runtime.key(b.id) { Block(state, b) }
+        BoxWithConstraints(Modifier.weight(1f).fillMaxWidth()) {
+            val density = LocalDensity.current
+            val width = constraints.maxWidth.toFloat()
+            val scale = remember(width, density) { PageScale(width / PAGE.width, density) }
+            val scroll = rememberScrollState()
+            var front by remember { mutableStateOf<FrontInk?>(null) }
+            if (!state.trashed) {
+                // Laid out under the page, so touches reach the page first,
+                // but shown above it.
+                AndroidView(
+                    factory = { context -> frontInkSurface(context) { front = it } },
+                    onRelease = { front?.release() },
+                    modifier = Modifier.matchParentSize().onGloballyPositioned { front?.coords = it },
+                )
             }
-            // The empty page below the last block: a tap there writes at the end.
-            Box(
-                Modifier
-                    .fillMaxWidth()
-                    .height(240.dp)
-                    .clickable(
-                        enabled = !state.trashed && state.tool == InkTool.TYPE,
-                        interactionSource = null,
-                        indication = null,
-                    ) { state.caretAtEnd() },
-            )
+            CompositionLocalProvider(LocalPage provides scale) {
+                Column(Modifier.fillMaxSize().verticalScroll(scroll)) {
+                    Column(Modifier.padding(horizontal = scale.dp(PAGE.margin))) {
+                        TitleField(state)
+                        Text(
+                            state.info?.let { dateLabel(it.updatedAt) } ?: "",
+                            color = c.textFaint,
+                            fontSize = 13.sp,
+                            modifier = Modifier.padding(top = 2.dp, bottom = 6.dp),
+                        )
+                    }
+                    PageBody(state, scale, scroll, front)
+                }
+            }
         }
         if (!state.trashed) {
             HorizontalDivider(color = c.border)
@@ -337,41 +343,57 @@ private fun TitleField(state: EditorState) {
     )
 }
 
+/**
+ * The page: blocks flowing down it, with the handwriting over all of it.
+ * It runs a screen's worth past the lowest text or writing, so there is
+ * always room to carry on.
+ */
+@Composable
+private fun PageBody(state: EditorState, scale: PageScale, scroll: androidx.compose.foundation.ScrollState, front: FrontInk?) {
+    var blocksHeight by remember { mutableIntStateOf(0) }
+    val room = with(LocalDensity.current) {
+        maxOf(PAGE.room * scale.px, (state.inkBottom + PAGE.room) * scale.px - blocksHeight).toDp()
+    }
+    Column(Modifier.fillMaxWidth().pageInk(state, scale, scroll, front)) {
+        Column(
+            Modifier
+                .fillMaxWidth()
+                .onSizeChanged { blocksHeight = it.height }
+                .padding(horizontal = scale.dp(PAGE.margin)),
+        ) {
+            for (b in state.blocks) {
+                androidx.compose.runtime.key(b.id) { Block(state, b) }
+            }
+        }
+        // The empty page below the last block: a tap there types at the end.
+        Box(
+            Modifier
+                .fillMaxWidth()
+                .height(room)
+                .clickable(
+                    enabled = !state.trashed && state.tool == InkTool.TYPE,
+                    interactionSource = null,
+                    indication = null,
+                ) { state.caretAtEnd() },
+        )
+    }
+}
+
 @Composable
 private fun Block(state: EditorState, b: BlockView) {
     when (val k = b.kind) {
         is BlockKind.Text -> TextBlock(state, b.id, k)
         is BlockKind.Divider -> DividerBlock(state, b.id)
         is BlockKind.Image -> ImageBlock(state, b.id, k)
-        is BlockKind.Ink -> InkBlock(state, b, k)
     }
-}
-
-private data class Look(
-    val size: Float = 16f,
-    val weight: FontWeight = FontWeight.Normal,
-    val mono: Boolean = false,
-    val muted: Boolean = false,
-    val faint: Boolean = false,
-    val top: Float = 3f,
-    val bottom: Float = 3f,
-)
-
-private fun look(k: BlockKind.Text): Look = when (k.style) {
-    StyleArg.HEADING1 -> Look(size = 27f, weight = FontWeight.SemiBold, top = 18f, bottom = 6f)
-    StyleArg.HEADING2 -> Look(size = 21.5f, weight = FontWeight.SemiBold, top = 14f, bottom = 4f)
-    StyleArg.HEADING3 -> Look(size = 18f, weight = FontWeight.SemiBold, top = 10f, bottom = 3f)
-    StyleArg.CODE -> Look(size = 14.5f, mono = true)
-    StyleArg.QUOTE -> Look(muted = true)
-    StyleArg.CHECKLIST -> Look(faint = k.checked)
-    else -> Look()
 }
 
 @Composable
 private fun TextBlock(state: EditorState, id: String, k: BlockKind.Text) {
     val c = Snot.colors
+    val page = LocalPage.current
     val value = state.fields[id] ?: return
-    val l = look(k)
+    val m = TEXT.getValue(k.style)
     val requester = remember { FocusRequester() }
     val pending = state.pendingCaret
     LaunchedEffect(pending) {
@@ -383,30 +405,30 @@ private fun TextBlock(state: EditorState, id: String, k: BlockKind.Text) {
         }
     }
     val color = when {
-        l.faint -> c.textFaint
-        l.muted -> c.textMuted
+        k.style == StyleArg.CHECKLIST && k.checked -> c.textFaint
+        k.style == StyleArg.QUOTE -> c.textMuted
         else -> c.text
     }
     val style = TextStyle(
         color = color,
-        fontSize = l.size.sp,
-        lineHeight = (l.size * 1.45f).sp,
-        fontWeight = l.weight,
-        fontFamily = if (l.mono) FontFamily.Monospace else FontFamily.Default,
+        fontSize = page.sp(m.size),
+        lineHeight = page.sp(m.lineHeight),
+        fontWeight = if (m.semibold) FontWeight.SemiBold else FontWeight.Normal,
+        fontFamily = if (m.mono) FontFamily.Monospace else FontFamily.Default,
         textDecoration = if (k.style == StyleArg.CHECKLIST && k.checked) TextDecoration.LineThrough else null,
     )
-    val lineHeight = (l.size * 1.45f).dp
+    val lineHeight = page.dp(m.lineHeight)
     Row(
         Modifier
             .fillMaxWidth()
             .height(IntrinsicSize.Min)
-            .padding(start = (k.indent * 24).dp, top = l.top.dp, bottom = l.bottom.dp)
+            .padding(start = page.dp(k.indent * PAGE.indent), top = page.dp(m.top), bottom = page.dp(m.bottom))
             .then(
                 if (k.style == StyleArg.CODE) {
                     Modifier
-                        .clip(RoundedCornerShape(6.dp))
+                        .clip(RoundedCornerShape(page.dp(15f)))
                         .background(c.codeBg)
-                        .padding(horizontal = 10.dp, vertical = 4.dp)
+                        .padding(horizontal = page.dp(PAGE.codePadX), vertical = page.dp(PAGE.codePadY))
                 } else {
                     Modifier
                 },
@@ -414,30 +436,31 @@ private fun TextBlock(state: EditorState, id: String, k: BlockKind.Text) {
     ) {
         when (k.style) {
             StyleArg.BULLET -> Prefix(lineHeight) {
-                Box(Modifier.size(6.dp).clip(CircleShape).background(c.text))
+                Box(Modifier.size(page.dp(PAGE.bullet)).clip(CircleShape).background(c.text))
             }
             StyleArg.NUMBERED -> Prefix(lineHeight) {
-                Text("${k.number ?: 1}.", color = c.textMuted, fontSize = 16.sp)
+                Text("${k.number ?: 1}.", color = c.textMuted, fontSize = page.sp(m.size))
             }
             StyleArg.CHECKLIST -> Prefix(lineHeight) {
+                val corner = RoundedCornerShape(page.dp(12f))
                 Box(
                     Modifier
-                        .size(20.dp)
-                        .clip(RoundedCornerShape(5.dp))
+                        .size(page.dp(PAGE.checkbox))
+                        .clip(corner)
                         .background(if (k.checked) c.accent else Color.Transparent)
-                        .border(1.5.dp, if (k.checked) c.accent else c.textMuted, RoundedCornerShape(5.dp))
+                        .border(page.dp(3.5f), if (k.checked) c.accent else c.textMuted, corner)
                         .clickable(enabled = !state.trashed) { state.toggleChecked(id) },
                     contentAlignment = Alignment.Center,
                 ) {
-                    if (k.checked) Icon(SnotIcons.Check, "Done", tint = c.accentText, modifier = Modifier.size(15.dp))
+                    if (k.checked) Icon(SnotIcons.Check, "Done", tint = c.accentText, modifier = Modifier.size(page.dp(36f)))
                 }
             }
             StyleArg.QUOTE -> Box(
                 Modifier
-                    .padding(end = 12.dp)
-                    .width(3.dp)
+                    .padding(end = page.dp(PAGE.quoteGap))
+                    .width(page.dp(PAGE.quoteBar))
                     .fillMaxHeight()
-                    .clip(RoundedCornerShape(2.dp))
+                    .clip(RoundedCornerShape(page.dp(4f)))
                     .background(c.quoteBar),
             )
             else -> {}
@@ -482,7 +505,9 @@ private fun TextBlock(state: EditorState, id: String, k: BlockKind.Text) {
 
 @Composable
 private fun Prefix(lineHeight: androidx.compose.ui.unit.Dp, content: @Composable () -> Unit) {
-    Box(Modifier.width(28.dp).height(lineHeight), contentAlignment = Alignment.CenterStart) { content() }
+    Box(Modifier.width(LocalPage.current.dp(PAGE.prefix)).height(lineHeight), contentAlignment = Alignment.CenterStart) {
+        content()
+    }
 }
 
 /** Long-press menu for blocks that are not text: reorder and delete. */
@@ -518,8 +543,9 @@ private fun DividerBlock(state: EditorState, id: String) {
     Box(
         Modifier
             .fillMaxWidth()
-            .combinedClickable(enabled = !state.trashed, onClick = {}, onLongClick = { menu = true })
-            .padding(vertical = 14.dp),
+            .height(LocalPage.current.dp(PAGE.dividerHeight))
+            .combinedClickable(enabled = !state.trashed, onClick = {}, onLongClick = { menu = true }),
+        contentAlignment = Alignment.Center,
     ) {
         HorizontalDivider(color = Snot.colors.border, thickness = 1.5.dp)
         BlockMenu(state, id, menu, { menu = false })
@@ -530,16 +556,17 @@ private fun DividerBlock(state: EditorState, id: String) {
 @Composable
 private fun ImageBlock(state: EditorState, id: String, k: BlockKind.Image) {
     val c = Snot.colors
+    val page = LocalPage.current
     var menu by remember { mutableStateOf(false) }
     val bitmap by produceState<android.graphics.Bitmap?>(null, k.attachment) {
         value = withContext(Dispatchers.IO) { decodeScaled(state.attachmentPath(k.attachment), 1600) }
     }
-    Column(Modifier.fillMaxWidth().padding(vertical = 8.dp)) {
+    Column(Modifier.fillMaxWidth().padding(vertical = page.dp(PAGE.imageGap))) {
         Box(
             Modifier
                 .fillMaxWidth()
                 .aspectRatio(1f / k.aspect.coerceIn(0.05f, 20f))
-                .clip(RoundedCornerShape(8.dp))
+                .clip(RoundedCornerShape(page.dp(20f)))
                 .background(c.codeBg)
                 .combinedClickable(enabled = !state.trashed, onClick = {}, onLongClick = { menu = true }),
         ) {
@@ -549,7 +576,14 @@ private fun ImageBlock(state: EditorState, id: String, k: BlockKind.Image) {
             BlockMenu(state, id, menu, { menu = false })
         }
         if (k.caption.isNotEmpty()) {
-            Text(k.caption, color = c.textMuted, fontSize = 14.sp, fontStyle = FontStyle.Italic, modifier = Modifier.padding(top = 6.dp))
+            Text(
+                k.caption,
+                color = c.textMuted,
+                fontSize = page.sp(PAGE.captionSize),
+                lineHeight = page.sp(PAGE.captionSize * PAGE.lineHeight),
+                fontStyle = FontStyle.Italic,
+                modifier = Modifier.padding(top = page.dp(15f)),
+            )
         }
     }
 }
@@ -561,49 +595,6 @@ private fun decodeScaled(path: String, maxWidth: Int): android.graphics.Bitmap? 
     var sample = 1
     while (bounds.outWidth / (sample * 2) >= maxWidth) sample *= 2
     return BitmapFactory.decodeFile(path, BitmapFactory.Options().apply { inSampleSize = sample })
-}
-
-@Composable
-private fun InkBlock(state: EditorState, b: BlockView, k: BlockKind.Ink) {
-    val c = Snot.colors
-    var menu by remember { mutableStateOf(false) }
-    Box(
-        Modifier
-            .fillMaxWidth()
-            .padding(vertical = 8.dp)
-            .clip(RoundedCornerShape(10.dp))
-            .border(1.dp, c.border, RoundedCornerShape(10.dp)),
-    ) {
-        InkCanvas(state, b.id, b.revision, k)
-        if (!state.trashed) {
-            Box(Modifier.align(Alignment.TopEnd)) {
-                ToolButton(SnotIcons.More, "Drawing options", size = 36.dp) { menu = true }
-                BlockMenu(state, b.id, menu, { menu = false }) { close ->
-                    for ((paper, label, icon) in listOf(
-                        Triple(PaperArg.PLAIN, "Plain paper", SnotIcons.Plain),
-                        Triple(PaperArg.LINED, "Lined paper", SnotIcons.Lined),
-                        Triple(PaperArg.GRID, "Grid paper", SnotIcons.Grid),
-                        Triple(PaperArg.DOTTED, "Dotted paper", SnotIcons.Dotted),
-                    )) {
-                        MenuItem(label, icon, if (k.paper == paper) c.accent else c.text) {
-                            close()
-                            state.setPaper(b.id, paper)
-                        }
-                    }
-                    HorizontalDivider(color = c.border)
-                    MenuItem("Make taller", SnotIcons.Expand) {
-                        close()
-                        state.extendInk(b.id)
-                    }
-                    MenuItem("Erase all", SnotIcons.Eraser) {
-                        close()
-                        state.clearInk(b.id)
-                    }
-                    HorizontalDivider(color = c.border)
-                }
-            }
-        }
-    }
 }
 
 // ---- toolbars ----------------------------------------------------------------
@@ -640,10 +631,6 @@ private fun TextToolbar(state: EditorState) {
         Box {
             ToolButton(SnotIcons.Plus, "Insert") { pop = Pop.INSERT }
             DropdownMenu(expanded = pop == Pop.INSERT, onDismissRequest = { pop = Pop.NONE }) {
-                MenuItem("Drawing", SnotIcons.Drawing) {
-                    pop = Pop.NONE
-                    state.insertInk()
-                }
                 MenuItem("Picture", SnotIcons.Image) {
                     pop = Pop.NONE
                     picker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
@@ -745,9 +732,31 @@ private fun Sep() {
 private fun InkToolbar(state: EditorState) {
     val c = Snot.colors
     val tool = state.tool
+    var paperMenu by remember { mutableStateOf(false) }
     Column(Modifier.fillMaxWidth().padding(horizontal = 6.dp, vertical = 4.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             ToolButton(SnotIcons.Type, "Type") { state.tool = InkTool.TYPE }
+            Box {
+                ToolButton(SnotIcons.Lined, "Paper") { paperMenu = true }
+                DropdownMenu(expanded = paperMenu, onDismissRequest = { paperMenu = false }) {
+                    for ((paper, label, icon) in listOf(
+                        Triple(PaperArg.PLAIN, "Plain paper", SnotIcons.Plain),
+                        Triple(PaperArg.LINED, "Lined paper", SnotIcons.Lined),
+                        Triple(PaperArg.GRID, "Grid paper", SnotIcons.Grid),
+                        Triple(PaperArg.DOTTED, "Dotted paper", SnotIcons.Dotted),
+                    )) {
+                        MenuItem(label, icon, if (state.paper == paper) c.accent else c.text) {
+                            paperMenu = false
+                            state.choosePaper(paper)
+                        }
+                    }
+                    HorizontalDivider(color = c.border)
+                    MenuItem("Erase all writing", SnotIcons.Eraser) {
+                        paperMenu = false
+                        state.clearInk()
+                    }
+                }
+            }
             Sep()
             ToolButton(SnotIcons.Pen, "Pen", active = tool == InkTool.PEN) { state.tool = InkTool.PEN }
             ToolButton(SnotIcons.Marker, "Marker", active = tool == InkTool.MARKER) { state.tool = InkTool.MARKER }

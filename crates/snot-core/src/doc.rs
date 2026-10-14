@@ -1,9 +1,11 @@
 //! The document model.
 //!
-//! A note body is a flat list of blocks. Each text block is one paragraph —
-//! a plain string plus a set of style spans over it — so a native editor can
-//! give every block its own text field and never has to parse markup. Ink
-//! and pictures are blocks of their own that sit in the same flow.
+//! A note body is a flat list of blocks flowing down the page. Each text
+//! block is one paragraph — a plain string plus a set of style spans over
+//! it — so a native editor can give every block its own text field and
+//! never has to parse markup. Pictures and dividers are blocks of their own
+//! in the same flow. Handwriting is not in the flow at all: it is one layer
+//! over the whole page (see [`crate::page`]).
 //!
 //! Every offset in this module counts Unicode scalar values (`char`s), not
 //! bytes and not UTF-16 units. That is the one unit every platform can
@@ -14,11 +16,19 @@ use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 
-use crate::ink::InkBlock;
+use crate::ink::InkLayer;
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct Doc {
     pub blocks: Vec<Block>,
+    /// Ink is reference-counted so that an undo snapshot of a note full of
+    /// handwriting costs a pointer, not a copy of every stroke.
+    #[serde(default, skip_serializing_if = "is_blank")]
+    pub ink: Arc<InkLayer>,
+}
+
+fn is_blank(ink: &Arc<InkLayer>) -> bool {
+    ink.is_empty()
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -34,9 +44,6 @@ pub enum Content {
     Text(TextBlock),
     Divider,
     Image(ImageBlock),
-    /// Ink is reference-counted so that an undo snapshot of a note full of
-    /// handwriting costs a pointer, not a copy of every stroke.
-    Ink(Arc<InkBlock>),
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
@@ -524,6 +531,15 @@ impl Doc {
     pub fn new() -> Self {
         Doc {
             blocks: vec![Block::text("")],
+            ink: Arc::default(),
+        }
+    }
+
+    /// A document of these blocks and no handwriting.
+    pub fn of(blocks: Vec<Block>) -> Self {
+        Doc {
+            blocks,
+            ink: Arc::default(),
         }
     }
 
@@ -590,9 +606,7 @@ impl Doc {
     }
 
     pub fn has_ink(&self) -> bool {
-        self.blocks
-            .iter()
-            .any(|b| matches!(&b.content, Content::Ink(i) if !i.strokes.is_empty()))
+        !self.ink.strokes.is_empty()
     }
 
     pub fn has_image(&self) -> bool {
@@ -614,7 +628,7 @@ impl Doc {
 
     /// Repairs what a document must always satisfy: at least one block,
     /// unique ids, and a text block to type into at the end, so the caret
-    /// can always land after a drawing or a picture.
+    /// can always land after a picture.
     pub fn sanitize(&mut self) {
         let mut seen = std::collections::HashSet::new();
         for block in &mut self.blocks {
@@ -803,7 +817,7 @@ mod tests {
 
     #[test]
     fn list_numbers_restart_and_nest() {
-        let mut doc = Doc { blocks: vec![] };
+        let mut doc = Doc::of(vec![]);
         let mut push = |style, indent| {
             let mut b = Block::styled(style, "x");
             b.as_text_mut().unwrap().indent = indent;
