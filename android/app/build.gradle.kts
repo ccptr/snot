@@ -46,7 +46,7 @@ android {
     ndkVersion = "27.2.12479018"
 
     defaultConfig {
-        applicationId = "app.snot"
+        applicationId = "dev.ccptr.Snot"
         minSdk = minApi
         targetSdk = 37
         versionCode = appVersionCode
