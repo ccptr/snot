@@ -77,6 +77,22 @@ cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
 ```
 
+## Releases
+
+Publishing a GitHub release tagged `vMAJOR.MINOR.PATCH` attaches a Linux
+tarball and a signed APK to it. The APK's version comes from the tag, with
+`versionCode` = `MAJOR * 1000000 + MINOR * 1000 + PATCH`. The APK is signed
+with the key in the `release` environment, which only deploys from `v*` tags:
+
+| Name | Kind | Value |
+|---|---|---|
+| `ANDROID_KEYSTORE_BASE64` | Secret | The PKCS12 release keystore, base64-encoded |
+| `ANDROID_KEYSTORE_PASSWORD` | Secret | Its password, which is also the key's |
+| `ANDROID_KEY_ALIAS` | Variable | The key's alias |
+
+To build an existing release again, run the workflow on its tag:
+`gh workflow run release.yml --ref v1.2.3`.
+
 ## Not there yet
 
 - Builds for Windows, macOS and iOS.

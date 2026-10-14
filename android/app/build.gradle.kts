@@ -32,14 +32,29 @@ android {
         applicationId = "app.snot"
         minSdk = minApi
         targetSdk = 37
-        versionCode = 1
-        versionName = "0.1.0"
+        // Release builds set these from the tag; see .github/workflows/release.yml.
+        versionCode = (findProperty("versionCode") as String?)?.toInt() ?: 1
+        versionName = (findProperty("versionName") as String?) ?: "0.1.0"
         // JNA ships dispatch libraries for ABIs snot-ffi is not built for.
         ndk { abiFilters += rustAbis }
     }
 
+    // The release key comes from the environment so that it only ever lives in
+    // CI secrets. Without SNOT_KEYSTORE, assembleRelease gives an unsigned APK.
+    val keystore = providers.environmentVariable("SNOT_KEYSTORE").orNull
+    if (keystore != null) {
+        signingConfigs.create("release") {
+            storeFile = file(keystore)
+            keyAlias = providers.environmentVariable("SNOT_KEY_ALIAS").get()
+            // A PKCS12 keystore, keytool's default, has one password for both.
+            storePassword = providers.environmentVariable("SNOT_KEYSTORE_PASSWORD").get()
+            keyPassword = storePassword
+        }
+    }
+
     buildTypes {
         release {
+            signingConfig = signingConfigs.findByName("release")
             isMinifyEnabled = true
             isShrinkResources = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
