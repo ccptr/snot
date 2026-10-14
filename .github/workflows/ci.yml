@@ -9,8 +9,10 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  # Every job checks formatting too, so each one alone says whether its
+  # platform is clean.
   core:
-    name: Core, FFI and formatting
+    name: Core and FFI (Linux)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -35,10 +37,38 @@ jobs:
             libxcb1-dev libfontconfig-dev libfreetype-dev libvulkan-dev libzstd-dev
       - uses: dtolnay/rust-toolchain@stable
         with:
-          components: clippy
+          components: clippy, rustfmt
       - uses: Swatinem/rust-cache@v2
+      - run: cargo fmt --all --check
       - run: cargo clippy -p snot-desktop --all-targets -- -D warnings
       - run: cargo test -p snot-desktop
+
+  # The whole workspace, desktop app included, on each Windows architecture
+  # the release builds. Debug builds compile GPUI's shaders at run time, so
+  # unlike a release these need no fxc.exe.
+  windows:
+    name: Windows (${{ matrix.name }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: x86_64
+            runner: windows-latest
+          - name: arm64
+            runner: windows-11-arm
+    runs-on: ${{ matrix.runner }}
+    steps:
+      # Git for Windows checks text out with CRLF line endings; keep the
+      # files byte for byte as committed, as on every other platform.
+      - run: git config --global core.autocrlf false
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo fmt --all --check
+      - run: cargo clippy --workspace --all-targets -- -D warnings
+      - run: cargo test --workspace
 
   android:
     name: Android
@@ -52,7 +82,9 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: aarch64-linux-android
+          components: rustfmt
       - uses: Swatinem/rust-cache@v2
+      - run: cargo fmt --all --check
       - name: Android NDK
         run: yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "ndk;27.2.12479018" > /dev/null
       # Compiles the Kotlin against freshly generated bindings and runs the

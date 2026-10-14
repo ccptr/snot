@@ -92,8 +92,8 @@ cargo test --workspace
 cd android && ./gradlew testDebugUnitTest -PrustAbis=arm64-v8a -PrustProfile=dev
 ```
 
-CI runs these on every push, with unoptimised builds only; optimised builds
-are made for releases.
+CI runs these on every push, on Linux and on Windows x86_64 and ARM64, with
+unoptimised builds only; optimised builds are made for releases.
 
 ## Releases
 
