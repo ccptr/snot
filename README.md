@@ -1,7 +1,8 @@
 # Snot
 
 Notes that mix typed text and handwriting on the same page, in the spirit
-of Samsung Notes, with native apps for Linux and Android over one Rust core.
+of Samsung Notes, with native apps for Linux, Windows and Android over one
+Rust core.
 
 - **Text** with headings, quotes, code, bulleted, numbered and checklists,
   indenting, bold, italic, underline, strikethrough, highlight and text colour.
@@ -30,8 +31,10 @@ plus an attachments folder.
 
 ## Install
 
-Snot is an alpha. Builds for Linux (x86_64) and Android (arm64 and x86_64)
-are attached to each [release](https://github.com/ccptr/snot/releases). On
+Snot is an alpha. Builds for Linux (x86_64), Windows (x86_64 and ARM64) and
+Android (arm64 and x86_64) are attached to each
+[release](https://github.com/ccptr/snot/releases). The Windows build is not
+code-signed, so SmartScreen asks before its first run. On
 Android it is also in an F-Droid repository, which keeps it updated: add
 [`https://fdroid.ccptr.dev/repo`](https://fdroid.ccptr.dev/) in F-Droid's
 **Settings → Repositories** by scanning the QR code there, which pins the
@@ -43,22 +46,24 @@ repository's signing key as it is added.
 |---|---|
 | `crates/snot-core` | Document model, editing sessions with undo, ink smoothing and outlines, storage and search, Markdown |
 | `crates/snot-ffi` | [UniFFI](https://mozilla.github.io/uniffi-rs/) bindings of the core for Kotlin |
-| `crates/snot-desktop` | Linux app drawn with [GPUI](https://www.gpui.rs/) (binary `snot`) |
+| `crates/snot-desktop` | Linux and Windows app drawn with [GPUI](https://www.gpui.rs/) (binary `snot`) |
 | `crates/uniffi-bindgen` | The bindings generator, pinned to the same UniFFI version |
 | `android` | Android app in Kotlin and Jetpack Compose |
 
-## Linux desktop
+## Desktop
 
 Needs a recent stable Rust and, on Debian or Ubuntu,
 `libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev libx11-xcb-dev
-libfontconfig-dev libvulkan-dev`.
+libfontconfig-dev libvulkan-dev`. On Windows it needs the MSVC build tools
+and a Windows SDK, whose `fxc.exe` compiles GPUI's shaders in release
+builds; build it on Windows, including for ARM64.
 
 ```sh
 cargo run --release -p snot-desktop
 ```
 
-Notes live in `$XDG_DATA_HOME/snot` (usually `~/.local/share/snot`); set
-`SNOT_LIBRARY` to use another folder. `SNOT_THEME=light` or `dark`
+Notes live in `$XDG_DATA_HOME/snot` (usually `~/.local/share/snot`), or
+`%APPDATA%\snot` on Windows; set `SNOT_LIBRARY` to use another folder. `SNOT_THEME=light` or `dark`
 overrides the system appearance. `Ctrl+=` and `Ctrl+-` zoom the page and
 `Ctrl+0` sets it back.
 
@@ -95,8 +100,8 @@ are made for releases.
 The version in the root `Cargo.toml` is the only one: the crates and the
 Android app both take it, with Android's `versionCode` =
 `MAJOR * 1000000 + MINOR * 1000 + PATCH`. Bump it, then publish a GitHub
-release tagged `v` plus that version, and a Linux tarball and a signed APK
-for each Android ABI are attached to it; a tag that does not match
+release tagged `v` plus that version, and a Linux tarball, a Windows zip for
+x86_64 and ARM64, and a signed APK for each Android ABI are attached to it; a tag that does not match
 `Cargo.toml` builds nothing. The APKs are signed with the key in the
 `release` environment, which only deploys from `v*` tags:
 
@@ -123,7 +128,7 @@ Android ABI builds in one job, into an APK of its own; to add one, add it to
 
 ## Not there yet
 
-- Builds for Windows, macOS and iOS.
+- Builds for macOS and iOS.
 - Pen pressure on the desktop (GPUI does not report it); Android uses it.
 - Selecting across several blocks at once.
 - Sync between devices, locked notes, PDF annotation and voice recordings.

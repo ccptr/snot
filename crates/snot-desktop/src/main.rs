@@ -1,4 +1,8 @@
-//! Snot for Linux: notes with text, lists, pictures and handwriting.
+//! Snot for the desktop: notes with text, lists, pictures and handwriting.
+
+// A release build on Windows is a GUI app and opens no console window; debug
+// builds keep one for their output.
+#![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
 
 mod app;
 mod assets;

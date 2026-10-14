@@ -1,7 +1,7 @@
 name: Release
 
-# Builds the desktop app and the signed Android APK for a release and attaches
-# them to it. To rebuild an existing release, run it by hand on the
+# Builds the desktop app for Linux and Windows and the signed Android APKs for
+# a release and attaches them to it. To rebuild an existing release, run it by hand on the
 # release's tag: `gh workflow run release.yml --ref v1.2.3`. The signing key is
 # in the `release` environment, which only deploys from v* tags.
 on:
@@ -37,7 +37,7 @@ jobs:
 
   # One job per desktop platform, all in parallel: each compiles everything
   # for its own target on a native runner, so they have nothing to share. To
-  # support another, add an entry; a non-Linux one also needs a Package step.
+  # support another, add an entry; a new OS also needs a Package case.
   desktop:
     name: Desktop (${{ matrix.name }})
     needs: version
@@ -48,7 +48,19 @@ jobs:
           - name: linux-x86_64
             runner: ubuntu-latest
             target: x86_64-unknown-linux-gnu
+          # GPUI compiles its shaders with the Windows SDK's fxc.exe, so
+          # Windows builds need a Windows runner, and ARM64 a native one.
+          - name: windows-x86_64
+            runner: windows-latest
+            target: x86_64-pc-windows-msvc
+          - name: windows-arm64
+            runner: windows-11-arm
+            target: aarch64-pc-windows-msvc
     runs-on: ${{ matrix.runner }}
+    # Git Bash on Windows, so every platform packages with the same script.
+    defaults:
+      run:
+        shell: bash
     env:
       VERSION: ${{ needs.version.outputs.version }}
     steps:
@@ -69,15 +81,31 @@ jobs:
         with:
           save-if: false
       - run: cargo build --release --locked -p snot-desktop --target ${{ matrix.target }}
+      # Each archive holds one folder of the app, the README and the fonts'
+      # licences. The folder is staged outside dist/, which holds only what
+      # is uploaded.
       - name: Package
-        if: runner.os == 'Linux'
         run: |
           name="snot-$VERSION-${{ matrix.name }}"
-          mkdir -p "dist/$name"
-          # The release profile keeps symbols for UniFFI; the app needs none.
-          strip -o "dist/$name/snot" "target/${{ matrix.target }}/release/snot"
-          cp README.md crates/snot-desktop/assets/fonts/*-OFL.txt "dist/$name/"
-          tar -C dist -czf "dist/$name.tar.gz" "$name"
+          bin="target/${{ matrix.target }}/release"
+          mkdir -p "stage/$name" dist
+          cp README.md crates/snot-desktop/assets/fonts/*-OFL.txt "stage/$name/"
+          case "$RUNNER_OS" in
+            Linux)
+              # The release profile keeps symbols for UniFFI; the app needs none.
+              strip -o "stage/$name/snot" "$bin/snot"
+              tar -C stage -czf "dist/$name.tar.gz" "$name"
+              ;;
+            Windows)
+              # MSVC keeps debug info in a separate .pdb, which is left out.
+              cp "$bin/snot.exe" "stage/$name/"
+              (cd stage && 7z a -tzip -bso0 "../dist/$name.zip" "$name")
+              ;;
+            *)
+              echo "::error::No packaging for $RUNNER_OS"
+              exit 1
+              ;;
+          esac
       - name: Attach to the release
         env:
           GH_TOKEN: ${{ github.token }}
