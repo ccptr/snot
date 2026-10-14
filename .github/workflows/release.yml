@@ -17,9 +17,30 @@ env:
   TAG: ${{ github.ref_name }}
 
 jobs:
+  version:
+    name: Version
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.check.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: The tag matches Cargo.toml
+        id: check
+        run: |
+          version="${TAG#v}"
+          cargo=$(sed -n '/^\[workspace\.package\]/,/^\[/s/^version = "\(.*\)"$/\1/p' Cargo.toml)
+          if [ "$version" != "$cargo" ]; then
+            echo "::error::Tag '$TAG' does not match version '$cargo' in Cargo.toml"
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
   desktop:
     name: Linux desktop (x86_64)
+    needs: version
     runs-on: ubuntu-latest
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
     steps:
       - uses: actions/checkout@v4
       - name: GPUI build dependencies
@@ -33,7 +54,7 @@ jobs:
       - run: cargo build --release --locked -p snot-desktop
       - name: Package
         run: |
-          name="snot-${TAG#v}-linux-x86_64"
+          name="snot-$VERSION-linux-x86_64"
           mkdir -p "dist/$name"
           # The release profile keeps symbols for UniFFI; the app needs none.
           strip -o "dist/$name/snot" target/release/snot
@@ -46,21 +67,13 @@ jobs:
 
   android:
     name: Android APK
+    needs: version
     runs-on: ubuntu-latest
     environment: release
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
     steps:
       - uses: actions/checkout@v4
-      - name: Version from the tag
-        run: |
-          version="${TAG#v}"
-          if [[ ! $version =~ ^([0-9]+)\.([0-9]+)\.([0-9]+)(-.+)?$ ]]; then
-            echo "::error::Tag '$TAG' is not of the form vMAJOR.MINOR.PATCH"
-            exit 1
-          fi
-          # Ordered like the versions themselves, so every release upgrades the last.
-          code=$(( BASH_REMATCH[1] * 1000000 + BASH_REMATCH[2] * 1000 + BASH_REMATCH[3] ))
-          echo "VERSION=$version" >> "$GITHUB_ENV"
-          echo "VERSION_CODE=$code" >> "$GITHUB_ENV"
       - name: Release key
         env:
           KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
@@ -86,7 +99,7 @@ jobs:
         env:
           SNOT_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
           SNOT_KEY_ALIAS: ${{ vars.ANDROID_KEY_ALIAS }}
-        run: ./gradlew --no-daemon assembleRelease -PversionCode="$VERSION_CODE" -PversionName="$VERSION"
+        run: ./gradlew --no-daemon assembleRelease
       - name: Check the signature
         run: |
           apksigner="$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)/apksigner"

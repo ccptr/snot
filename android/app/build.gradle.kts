@@ -8,6 +8,16 @@ plugins {
 val minApi = 26
 
 /**
+ * The app's version is the Rust workspace's, so the two cannot drift.
+ * versionCode orders like the version, so every release upgrades the last.
+ */
+val appVersion = Regex("""(?ms)^\[workspace\.package\].*?^version = "([^"]+)"""")
+    .find(rootProject.projectDir.parentFile.resolve("Cargo.toml").readText())
+    ?.groupValues?.get(1) ?: error("No [workspace.package] version in Cargo.toml")
+val appVersionCode = appVersion.substringBefore('-').split('.').map(String::toInt)
+    .let { (major, minor, patch) -> major * 1_000_000 + minor * 1_000 + patch }
+
+/**
  * ABIs to build snot-ffi for, as `abi to Rust target`. Override with
  * `-PrustAbis=arm64-v8a` to build fewer, or add `x86_64` for an emulator.
  */
@@ -32,9 +42,8 @@ android {
         applicationId = "app.snot"
         minSdk = minApi
         targetSdk = 37
-        // Release builds set these from the tag; see .github/workflows/release.yml.
-        versionCode = (findProperty("versionCode") as String?)?.toInt() ?: 1
-        versionName = (findProperty("versionName") as String?) ?: "0.1.0"
+        versionCode = appVersionCode
+        versionName = appVersion
         // JNA ships dispatch libraries for ABIs snot-ffi is not built for.
         ndk { abiFilters += rustAbis }
     }

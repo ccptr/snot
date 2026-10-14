@@ -79,10 +79,13 @@ cargo test --workspace
 
 ## Releases
 
-Publishing a GitHub release tagged `vMAJOR.MINOR.PATCH` attaches a Linux
-tarball and a signed APK to it. The APK's version comes from the tag, with
-`versionCode` = `MAJOR * 1000000 + MINOR * 1000 + PATCH`. The APK is signed
-with the key in the `release` environment, which only deploys from `v*` tags:
+The version in the root `Cargo.toml` is the only one: the crates and the
+Android app both take it, with Android's `versionCode` =
+`MAJOR * 1000000 + MINOR * 1000 + PATCH`. Bump it, then publish a GitHub
+release tagged `v` plus that version, and a Linux tarball and a signed APK are
+attached to it; a tag that does not match `Cargo.toml` builds nothing. The APK
+is signed with the key in the `release` environment, which only deploys from
+`v*` tags:
 
 | Name | Kind | Value |
 |---|---|---|

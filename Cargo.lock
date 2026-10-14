@@ -5182,7 +5182,7 @@ dependencies = [
 
 [[package]]
 name = "snot-core"
-version = "0.1.0"
+version = "0.0.1-rc.1"
 dependencies = [
  "base64",
  "pulldown-cmark",
@@ -5197,7 +5197,7 @@ dependencies = [
 
 [[package]]
 name = "snot-desktop"
-version = "0.1.0"
+version = "0.0.1-rc.1"
 dependencies = [
  "anyhow",
  "chrono",
@@ -5213,7 +5213,7 @@ dependencies = [
 
 [[package]]
 name = "snot-ffi"
-version = "0.1.0"
+version = "0.0.1-rc.1"
 dependencies = [
  "snot-core",
  "thiserror 2.0.17",
@@ -5955,7 +5955,7 @@ dependencies = [
 
 [[package]]
 name = "uniffi-bindgen"
-version = "0.1.0"
+version = "0.0.1-rc.1"
 dependencies = [
  "uniffi",
 ]
