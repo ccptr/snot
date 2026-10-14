@@ -1080,10 +1080,10 @@ impl SnotApp {
             Dialog::RenameFolder(_, f) => ("Rename folder", None, Some(f.clone()), "Rename", false),
             Dialog::EmptyTrash => (
                 "Empty the trash?",
-                Some(format!(
-                    "{} notes will be deleted for good.",
-                    self.counts.trash
-                )),
+                Some(match self.counts.trash {
+                    1 => "1 note will be deleted for good.".to_string(),
+                    n => format!("{n} notes will be deleted for good."),
+                }),
                 None,
                 "Empty trash",
                 true,

@@ -17,7 +17,8 @@ uniffi = "0.32.2"
 [profile.release]
 lto = "thin"
 codegen-units = 1
-strip = true
+# Symbols stay: UniFFI reads its metadata from them to generate bindings.
+strip = "debuginfo"
 
 # GPUI is built against these forks inside the Zed workspace; a git
 # dependency on it does not inherit Zed's patches, so they are repeated here.

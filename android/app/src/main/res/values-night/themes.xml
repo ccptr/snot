@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="Theme.Snot" parent="android:Theme.Material.NoActionBar">
+        <item name="android:windowBackground">@color/window</item>
+    </style>
+    <color name="window">#FF1C1B1A</color>
+</resources>

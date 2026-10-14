@@ -10,6 +10,10 @@ static ICONS: &[(&str, &[u8])] = &[
         include_bytes!("../assets/icons/arrow-down.svg"),
     ),
     (
+        "icons/arrow-left.svg",
+        include_bytes!("../assets/icons/arrow-left.svg"),
+    ),
+    (
         "icons/arrow-up.svg",
         include_bytes!("../assets/icons/arrow-up.svg"),
     ),
@@ -95,6 +99,10 @@ static ICONS: &[(&str, &[u8])] = &[
         include_bytes!("../assets/icons/inbox.svg"),
     ),
     (
+        "icons/indent.svg",
+        include_bytes!("../assets/icons/indent.svg"),
+    ),
+    (
         "icons/italic.svg",
         include_bytes!("../assets/icons/italic.svg"),
     ),
@@ -106,6 +114,7 @@ static ICONS: &[(&str, &[u8])] = &[
         "icons/marker.svg",
         include_bytes!("../assets/icons/marker.svg"),
     ),
+    ("icons/menu.svg", include_bytes!("../assets/icons/menu.svg")),
     ("icons/more.svg", include_bytes!("../assets/icons/more.svg")),
     ("icons/move.svg", include_bytes!("../assets/icons/move.svg")),
     (
@@ -115,6 +124,10 @@ static ICONS: &[(&str, &[u8])] = &[
     (
         "icons/numbers.svg",
         include_bytes!("../assets/icons/numbers.svg"),
+    ),
+    (
+        "icons/outdent.svg",
+        include_bytes!("../assets/icons/outdent.svg"),
     ),
     (
         "icons/palette.svg",
@@ -139,6 +152,10 @@ static ICONS: &[(&str, &[u8])] = &[
     (
         "icons/search.svg",
         include_bytes!("../assets/icons/search.svg"),
+    ),
+    (
+        "icons/share.svg",
+        include_bytes!("../assets/icons/share.svg"),
     ),
     (
         "icons/sidebar.svg",
