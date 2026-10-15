@@ -1,9 +1,10 @@
 name: Release
 
-# Builds the desktop app for Linux and Windows and the signed Android APKs for
-# a release and attaches them to it. To rebuild an existing release, run it by hand on the
-# release's tag: `gh workflow run release.yml --ref v1.2.3`. The signing key is
-# in the `release` environment, which only deploys from v* tags.
+# Builds the desktop app for Linux and Windows, an Arch Linux package and the
+# signed Android APKs for a release and attaches them to it. To rebuild an
+# existing release, run it by hand on the release's tag:
+# `gh workflow run release.yml --ref v1.2.3`. The signing key is in the
+# `release` environment, which only deploys from v* tags.
 on:
   release:
     types: [published]
@@ -94,6 +95,8 @@ jobs:
             Linux)
               # The release profile keeps symbols for UniFFI; the app needs none.
               strip -o "stage/$name/snot" "$bin/snot"
+              cp crates/snot-desktop/assets/linux/dev.ccptr.Snot.desktop "stage/$name/"
+              cp crates/snot-desktop/assets/app-icon.svg "stage/$name/dev.ccptr.Snot.svg"
               tar -C stage -czf "dist/$name.tar.gz" "$name"
               ;;
             Windows)
@@ -106,6 +109,20 @@ jobs:
               exit 1
               ;;
           esac
+      # The pacman package is the AUR's snot-notes-bin, built in Arch from
+      # the tarball just made (makepkg takes a source file it finds next to
+      # the PKGBUILD rather than downloading it).
+      - name: Arch package
+        if: runner.os == 'Linux'
+        run: |
+          aur=packaging/aur/snot-notes-bin
+          cp "dist/snot-$VERSION-linux-x86_64.tar.gz" "$aur/"
+          docker run --rm -v "$PWD:/src" -w /src -e VERSION -e aur="$aur" archlinux:base-devel bash -euc '
+            pacman -Syu --noconfirm --needed pacman-contrib > /dev/null
+            useradd -m -u "$(stat -c %u /src)" builder
+            su builder -c "packaging/aur/update.sh \"$VERSION\" snot-notes-bin && cd \"$aur\" && makepkg --nodeps"
+          '
+          mv "$aur"/snot-notes-bin-*.pkg.tar.zst dist/
       - name: Attach to the release
         env:
           GH_TOKEN: ${{ github.token }}

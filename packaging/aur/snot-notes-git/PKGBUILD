@@ -1,0 +1,55 @@
+# Maintainer: ccptr <https://github.com/ccptr>
+
+pkgname=snot-notes-git
+pkgver=0.0.1rc.1.r4.gc369298
+pkgrel=1
+pkgdesc='Notes that mix typed text and handwriting on the same page (latest commit)'
+arch=(x86_64)
+url=https://github.com/ccptr/snot
+license=(GPL-3.0-or-later OFL-1.1)
+# wayland, the Vulkan loader and its driver are loaded at run time.
+depends=(glibc hicolor-icon-theme libgcc libxcb libxkbcommon libxkbcommon-x11 vulkan-driver vulkan-icd-loader wayland)
+makedepends=(cargo fontconfig git)
+provides=(snot-notes)
+conflicts=(snot-notes)
+# makepkg's LTO compiles the bundled SQLite to GCC bytecode, which Rust's
+# linker cannot read; Cargo's release profile does its own LTO.
+options=(!lto)
+source=("git+$url.git")
+sha256sums=('SKIP')
+
+pkgver() {
+  cd snot
+  # v1.2.3-4-gabcdef0 becomes 1.2.3.r4.gabcdef0, and v1.2.3-rc.1-4-gabcdef0
+  # 1.2.3rc.1.r4.gabcdef0, which pacman sorts before 1.2.3.
+  git describe --long --tags --abbrev=7 | sed -E 's/^v//; s/-([0-9]+)-g([0-9a-f]+)$/.r\1.g\2/; s/-//g'
+}
+
+prepare() {
+  cd snot
+  export RUSTUP_TOOLCHAIN=stable
+  cargo fetch --locked --target "$(rustc -vV | sed -n 's/^host: //p')"
+}
+
+build() {
+  cd snot
+  export RUSTUP_TOOLCHAIN=stable CARGO_TARGET_DIR=target
+  cargo build --frozen --release -p snot-desktop
+}
+
+check() {
+  cd snot
+  export RUSTUP_TOOLCHAIN=stable CARGO_TARGET_DIR=target
+  cargo test --frozen --release -p snot-core -p snot-desktop
+}
+
+package() {
+  cd snot
+  local assets=crates/snot-desktop/assets
+  install -Dm755 target/release/snot -t "$pkgdir/usr/bin"
+  install -Dm644 $assets/linux/dev.ccptr.Snot.desktop -t "$pkgdir/usr/share/applications"
+  install -Dm644 $assets/app-icon.svg "$pkgdir/usr/share/icons/hicolor/scalable/apps/dev.ccptr.Snot.svg"
+  install -Dm644 README.md -t "$pkgdir/usr/share/doc/$pkgname"
+  # The fonts built into the binary.
+  install -Dm644 $assets/fonts/*-OFL.txt -t "$pkgdir/usr/share/licenses/$pkgname"
+}

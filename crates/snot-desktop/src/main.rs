@@ -53,7 +53,9 @@ fn main() -> anyhow::Result<()> {
                     title: Some("Snot".into()),
                     ..Default::default()
                 }),
-                app_id: Some("snot-app".into()),
+                // The Wayland app_id and X11 WM_CLASS, which desktops match
+                // to assets/linux/dev.ccptr.Snot.desktop for the icon.
+                app_id: Some("dev.ccptr.Snot".into()),
                 window_min_size: Some(size(px(760.), px(480.))),
                 ..Default::default()
             };

@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Name=Snot
+GenericName=Notes
+Comment=Notes that mix typed text and handwriting on the same page
+Exec=snot
+Icon=dev.ccptr.Snot
+Terminal=false
+Categories=Office;
+Keywords=notes;handwriting;ink;pen;stylus;markdown;
+StartupNotify=true
+StartupWMClass=dev.ccptr.Snot

@@ -1,0 +1,27 @@
+pkgbase = snot-notes-git
+	pkgdesc = Notes that mix typed text and handwriting on the same page (latest commit)
+	pkgver = 0.0.1rc.1.r4.gc369298
+	pkgrel = 1
+	url = https://github.com/ccptr/snot
+	arch = x86_64
+	license = GPL-3.0-or-later
+	license = OFL-1.1
+	makedepends = cargo
+	makedepends = fontconfig
+	makedepends = git
+	depends = glibc
+	depends = hicolor-icon-theme
+	depends = libgcc
+	depends = libxcb
+	depends = libxkbcommon
+	depends = libxkbcommon-x11
+	depends = vulkan-driver
+	depends = vulkan-icd-loader
+	depends = wayland
+	provides = snot-notes
+	conflicts = snot-notes
+	options = !lto
+	source = git+https://github.com/ccptr/snot.git
+	sha256sums = SKIP
+
+pkgname = snot-notes-git

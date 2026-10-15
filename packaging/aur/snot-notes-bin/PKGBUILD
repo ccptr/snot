@@ -1,0 +1,30 @@
+# Maintainer: ccptr <https://github.com/ccptr>
+
+pkgname=snot-notes-bin
+# The release's version from Cargo.toml; pkgver drops its hyphen, so that
+# 1.2.3-rc.1 becomes 1.2.3rc.1, which pacman sorts before 1.2.3.
+_version=0.0.1
+pkgver=${_version//-/}
+pkgrel=1
+pkgdesc='Notes that mix typed text and handwriting on the same page (prebuilt)'
+arch=(x86_64)
+url=https://github.com/ccptr/snot
+license=(GPL-3.0-or-later OFL-1.1)
+# wayland, the Vulkan loader and its driver are loaded at run time.
+depends=(glibc hicolor-icon-theme libgcc libxcb libxkbcommon libxkbcommon-x11 vulkan-driver vulkan-icd-loader wayland)
+provides=(snot-notes)
+conflicts=(snot-notes)
+# Stripped already, so there is nothing for a debug package.
+options=(!debug)
+# The Linux tarball attached to the GitHub release.
+source=("$url/releases/download/v$_version/snot-$_version-linux-x86_64.tar.gz")
+sha256sums=('SKIP')
+
+package() {
+  cd snot-$_version-linux-x86_64
+  install -Dm755 snot -t "$pkgdir/usr/bin"
+  install -Dm644 dev.ccptr.Snot.desktop -t "$pkgdir/usr/share/applications"
+  install -Dm644 dev.ccptr.Snot.svg -t "$pkgdir/usr/share/icons/hicolor/scalable/apps"
+  install -Dm644 README.md -t "$pkgdir/usr/share/doc/$pkgname"
+  install -Dm644 *-OFL.txt -t "$pkgdir/usr/share/licenses/$pkgname"
+}

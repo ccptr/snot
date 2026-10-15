@@ -1,6 +1,6 @@
 <!-- The app icon: the Android launcher icon's page on its orange tile,
      cropped to a square around the page. tools/gen_ico.py renders it into
-     windows/snot.ico. -->
+     windows/snot.ico; on Linux it is installed as is, as dev.ccptr.Snot.svg. -->
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="18 19 72 72" width="256" height="256">
   <rect x="18" y="19" width="72" height="72" rx="16" fill="#F4842D"/>
   <path fill="#FFFFFF" d="M38,30h26l10,10v36a4,4 0 0 1 -4,4h-32a4,4 0 0 1 -4,-4v-42a4,4 0 0 1 4,-4z"/>
