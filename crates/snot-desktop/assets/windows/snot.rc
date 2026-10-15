@@ -1,0 +1,9 @@
+// Resources linked into snot.exe on Windows by build.rs.
+//
+// GPUI loads icon 1 as every window's icon, so this one is both the file's
+// icon in Explorer and the window's in the title bar and taskbar.
+//
+// snot.ico is ../app-icon.svg rendered by crates/snot-desktop/tools/gen_ico.py;
+// run it again after changing the SVG.
+
+1 ICON "snot.ico"
